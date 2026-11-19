@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>당신은 탈모입니까? · 1분 탈모 자가 체크</title>
+  <meta name="description" content="사진 2장, 1분이면 끝. 노우드-해밀턴 기준으로 보는 재미용 탈모 자가 체크. 사진은 서버로 전송되지 않아요.">
+  <meta name="theme-color" content="#FFF8EE">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://aaahyun.github.io/cheerupbald/">
+  <meta property="og:title" content="당신은 탈모입니까?">
+  <meta property="og:description" content="사진 2장, 1분이면 끝. 재미로 보는 탈모 자가 체크">
+  <meta property="og:image" content="https://aaahyun.github.io/cheerupbald/assets/og/default.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main id="app">
+
+  <!-- 1. 랜딩 -->
+  <section class="screen" data-screen="landing" hidden>
+    <div class="landing">
+      <div class="landing-art" id="landingArt" aria-hidden="true"></div>
+      <h1 class="headline">당신은<br>탈모입니까?</h1>
+      <p class="sub">사진 2장, 1분이면 끝</p>
+      <button class="btn primary big" data-action="start">테스트하러 가기</button>
+      <ul class="assure">
+        <li><span class="ico">🔒</span>사진은 서버로 전송되지 않아요</li>
+        <li><span class="ico">🩺</span>의료 진단이 아닌 참고용 테스트예요</li>
+      </ul>
+    </div>
+    <footer class="disclaimer" data-disclaimer></footer>
+  </section>
+
+  <!-- 2. 기본 정보 -->
+  <section class="screen" data-screen="info" hidden>
+    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로">←</button><span class="progress">기본 정보</span></header>
+    <h2 class="title">먼저 몇 가지만 알려주세요</h2>
+    <div class="field">
+      <p class="label">성별</p>
+      <div class="choices" data-field="gender">
+        <button data-value="m">남성</button><button data-value="f">여성</button>
+      </div>
+    </div>
+    <div class="field">
+      <p class="label">나이</p>
+      <div class="choices wrap" data-field="age">
+        <button data-value="10">10대</button><button data-value="20">20대</button><button data-value="30">30대</button>
+        <button data-value="40">40대</button><button data-value="50">50대 이상</button>
+      </div>
+    </div>
+    <div class="field">
+      <p class="label">가족 중 탈모인</p>
+      <div class="choices" data-field="family">
+        <button data-value="yes">있음</button><button data-value="no">없음</button><button data-value="unknown">잘 모름</button>
+      </div>
+    </div>
+    <div class="bottom">
+      <button class="btn primary big" data-action="info-next" disabled>다음</button>
+    </div>
+  </section>
+
+  <!-- 3. 촬영 (정면 / 정수리 공용) -->
+  <section class="screen" data-screen="capture" hidden>
+    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로">←</button><span class="progress" id="capStep"></span></header>
+    <h2 class="title" id="capTitle"></h2>
+    <div class="guide" id="capGuide"></div>
+    <ul class="tips" id="capTips"></ul>
+    <p class="privacy"><span class="ico">🔒</span><span data-privacy></span></p>
+    <div class="cap-status" id="capStatus" hidden></div>
+    <div class="bottom col">
+      <button class="btn primary big" id="capNext" hidden>다음</button>
+      <div class="row">
+        <label class="btn" id="capShootLabel"><input type="file" accept="image/*" id="capShoot" hidden>촬영하기</label>
+        <label class="btn"><input type="file" accept="image/*" id="capAlbum" hidden>앨범에서 선택</label>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 검사 중 -->
+  <section class="screen" data-screen="analyzing" hidden>
+    <div class="analyzing">
+      <div class="scanner" aria-hidden="true"><div id="scanArt"></div><div class="beam"></div></div>
+      <p class="step-text" id="analyzeText" aria-live="polite"></p>
+      <div class="dots"><i></i><i></i><i></i><i></i></div>
+    </div>
+  </section>
+
+  <!-- 5. 결과 -->
+  <section class="screen" data-screen="result" hidden>
+    <div id="resultBody"></div>
+  </section>
+
+</main>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card">
+    <p class="sheet-title">이미지를 길게 눌러 저장하세요</p>
+    <img id="sheetImg" alt="결과 카드">
+    <button class="btn" data-action="close-sheet">닫기</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

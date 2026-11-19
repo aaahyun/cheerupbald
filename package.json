@@ -1,0 +1,10 @@
+{
+  "name": "cheerupbald",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node tools/test-judge.mjs",
+    "serve": "python3 -m http.server 8000"
+  }
+}
