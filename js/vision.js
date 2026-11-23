@@ -125,7 +125,7 @@ const IDX = {
 // ───────────────────────── 정면 ─────────────────────────
 /**
  * 정면 사진 측정. 품질 실패 시 QualityError(reason) 를 던진다.
- * 반환: { F, M, hairlineMissing, geom } — geom은 오버레이용 좌표.
+ * 반환: { H, M, hairlineMissing, geom } — geom은 오버레이용 좌표. H = 이마 높이 ÷ U.
  */
 export async function analyzeFront(canvas) {
   const { face, seg } = await loadModels();
@@ -180,7 +180,7 @@ export async function analyzeFront(canvas) {
   // 6) 헤어라인 찾기: 눈썹 선에서 얼굴 위쪽 방향으로 훑어 올라가며 머리카락이 시작되는 지점
   const mask = await segmentHair(seg, canvas);
   const hairAt = maskSampler(mask, W, H);
-  const MAX_T = 3.2; // U 배수. F 2.0 이상은 VI이므로 이 정도면 충분
+  const MAX_T = 3.2; // U 배수. 이보다 높으면 이마 위로 머리카락이 없다고 본다
   const scan = (origin) => {
     const step = U * 0.02;
     let run = 0;
@@ -206,11 +206,11 @@ export async function analyzeFront(canvas) {
 
   if (center.out) throw new QualityError('hairline'); // 이마 위가 잘림
   if (center.none) {
-    // 이마 위로 머리카락이 없다 → 헤어라인 없음(VII 후보). 정수리 결과를 보고 판단한다.
-    return { F: null, M: null, hairlineMissing: true, geom };
+    // 이마 위로 머리카락이 없다 → 정수리 사진의 P로만 판정한다 (판정 규칙 5).
+    return { H: null, M: null, hairlineMissing: true, geom };
   }
-  const F = center.t / U;
-  if (F < 0.55) throw new QualityError('hairline'); // 앞머리가 이마를 덮음
+  const fh = center.t / U; // 이마 높이 지표 H
+  if (fh < 0.55) throw new QualityError('hairline'); // 앞머리가 이마를 덮음
 
   const sides = [sideOrigin(eL), sideOrigin(eR)].map((o) => {
     const s = scan(o);
@@ -218,18 +218,18 @@ export async function analyzeFront(canvas) {
   });
   // 관자놀이 쪽이 눈썹 바로 위에서 머리카락에 막히면 옆 앞머리가 덮은 것
   if (sides.some((v) => v != null && v < 0.55)) throw new QualityError('hairline');
-  const Ms = sides.filter((v) => v != null).map((v) => Math.max(0, v - F));
+  const Ms = sides.filter((v) => v != null).map((v) => Math.max(0, v - fh));
   const M = Ms.length ? Math.max(...Ms) : null;
 
-  geom.hairline = { center: F, sideL: sides[0], sideR: sides[1] };
-  return { F, M, hairlineMissing: false, geom };
+  geom.hairline = { center: fh, sideL: sides[0], sideR: sides[1] };
+  return { H: fh, M, hairlineMissing: false, geom };
 }
 
 // ───────────────────────── 정수리 ─────────────────────────
 /**
- * 정수리 사진 측정.
- * 반환: { C, B, part, grid } — grid는 오버레이용 두피 픽셀 격자.
- * 사진 위쪽이 이마 방향이라고 가정한다 (가이드에 안내).
+ * 정수리 사진 측정 (PRD v1.1: P·V율·T율).
+ * 사진 위쪽이 이마 방향이고, 가마가 가이드 원 가운데 있다고 가정한다 (가이드에 안내).
+ * 반환: { P, uPos, shape, V, T, vtConnected, grid } — grid는 오버레이용 격자와 좌표.
  */
 export async function analyzeCrown(canvas) {
   const { seg } = await loadModels();
@@ -240,11 +240,10 @@ export async function analyzeCrown(canvas) {
 
   const cx = W / 2, cy = H / 2;
   const r = Math.min(W, H) * CROWN_CIRCLE.radiusRatio;
-  const G = 160; // 격자 해상도
+  const G = CROWN_GRID;
   const cell = (2 * r) / G;
-  // 0: 원 밖, 1: 배경, 2: 머리카락, 3: 두피
-  const grid = new Uint8Array(G * G);
-  let inCircle = 0, head = 0, scalp = 0, lumaSum = 0, hx = 0, hy = 0;
+  const grid = new Uint8Array(G * G); // CELL 값 참고
+  let inCircle = 0, head = 0, lumaSum = 0, hx = 0, hy = 0;
 
   for (let gy = 0; gy < G; gy++) {
     for (let gx = 0; gx < G; gx++) {
@@ -258,111 +257,123 @@ export async function analyzeCrown(canvas) {
       lumaSum += Y;
       const skin = isSkin(R, Gc, B);
       const hair = !skin && (hairAt(x, y) >= 0.5 || Y < 100);
-      let v = 1;
-      if (skin) { v = 3; scalp++; }
-      else if (hair) v = 2;
-      if (v >= 2) { head++; hx += gx; hy += gy; }
+      let v = CELL.bg;
+      if (skin) v = CELL.scalp;
+      else if (hair) v = CELL.hair;
+      if (v !== CELL.bg) { head++; hx += gx; hy += gy; }
       grid[gy * G + gx] = v;
     }
   }
 
   if (lumaSum / inCircle < 55) throw new QualityError('light');
-  const headFrac = head / inCircle;
-  if (headFrac < 0.55) throw new QualityError('circle');
+  if (head / inCircle < 0.55) throw new QualityError('circle');
   const off = Math.hypot(hx / head - G / 2, hy / head - G / 2) / (G / 2);
   if (off > 0.35) throw new QualityError('circle');
 
-  const C = (scalp / head) * 100;
-  const B = C < 15 ? 'present' : bandState(grid, G);
-  const part = partingWidth(grid, G);
-  return { C, B, part, grid: { data: grid, G, cx, cy, r, W, H } };
+  const m = measureCrownGrid(grid, G);
+  if (m.P == null) throw new QualityError('circle');
+  return { ...m, grid: { data: grid, G, cx, cy, r, W, H, ...m.geom } };
 }
 
-// 앞쪽(원 위쪽 15%)에 닿은 두피 영역과 정수리(중앙) 두피 영역 사이의 머리 띠 두께
-function bandState(grid, G) {
+export const CROWN_GRID = 160;
+// 격자 칸 값: 0 원 밖, 1 배경, 2 머리카락, 3 두피, 4 앞머리 후퇴로 드러난 두피(기본형 몫)
+export const CELL = { out: 0, bg: 1, hair: 2, scalp: 3, recession: 4 };
+const V_RADIUS = 0.2; // 가마 원 반지름 (격자 한 변 대비)
+
+/**
+ * 격자만으로 P·V율·T율을 잰다 (DOM 없음, node 테스트 가능). grid를 제자리에서 고친다(후퇴 영역 = 4).
+ *  - 가마 = 격자 가운데. 원래 헤어라인 = 각 열에서 머리가 시작되는 앞 윤곽.
+ *  - 현재 헤어라인 = 앞 윤곽에서 뒤로 내려가며 처음 나오는 머리카락 띠(3칸 이상).
+ *  - P = (현재 헤어라인 − 앞 윤곽) ÷ (가마 − 앞 윤곽) × 100, 가운데 띠 열들 중 가장 많이 후퇴한 쪽(80번째 백분위).
+ */
+export function measureCrownGrid(grid, G) {
+  const at = (x, y) => grid[y * G + x];
+  const vx = Math.floor(G / 2), vy = Math.floor(G / 2);
+  const isHead = (v) => v === CELL.hair || v === CELL.scalp;
+
+  // 가마 높이에서 머리 폭 → 가운데 띠(관자놀이까지)
+  let left = -1, right = -1;
+  for (let x = 0; x < G; x++) if (isHead(at(x, vy))) { if (left < 0) left = x; right = x; }
+  if (left < 0) return { P: null };
+  const hc = (left + right) / 2, hw = (right - left) / 2;
+  const x0 = Math.max(0, Math.ceil(hc - hw * 0.5)), x1 = Math.min(G - 1, Math.floor(hc + hw * 0.5));
+
+  const hairRow = new Int16Array(G).fill(-1);
+  const cols = []; // { x, P, uPos }
+  for (let x = x0; x <= x1; x++) {
+    let front = -1, back = -1;
+    for (let y = 0; y < G; y++) if (isHead(at(x, y))) { if (front < 0) front = y; back = y; }
+    if (front < 0 || vy - front < G * 0.15) continue;
+    let hl = back + 1;
+    for (let y = front; y <= back - 2; y++) {
+      if (at(x, y) === CELL.hair && at(x, y + 1) === CELL.hair && at(x, y + 2) === CELL.hair) { hl = y; break; }
+    }
+    hairRow[x] = hl;
+    for (let y = front; y < hl && y < G; y++) if (at(x, y) === CELL.scalp) grid[y * G + x] = CELL.recession;
+    const P = ((hl - front) / (vy - front)) * 100;
+    const uPos = hl > vy ? ((hl - vy) / Math.max(1, back + 1 - vy)) * 100 : 0;
+    cols.push({ x, P, uPos });
+  }
+  if (cols.length < 3) return { P: null };
+
+  const pct = (arr, q) => { const a = [...arr].sort((p, q2) => p - q2); return a[Math.min(a.length - 1, Math.floor(a.length * q))]; };
+  const P = pct(cols.map((c) => c.P), 0.8);
+  const uCols = cols.filter((c) => c.uPos > 0);
+  const uPos = uCols.length ? pct(uCols.map((c) => c.uPos), 0.5) : 0;
+
+  // 후퇴 모양: 관자놀이 쪽이 가운데보다 10%p 이상 더 들어가면 M자
+  const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+  const centerP = mean(cols.filter((c) => Math.abs(c.x - hc) <= hw * 0.15).map((c) => c.P));
+  const sideP = mean(cols.filter((c) => Math.abs(c.x - hc) >= hw * 0.3).map((c) => c.P));
+  const shape = sideP - centerP >= 10 ? 'M' : 'C';
+
+  // V율: 가마 원 안 / T율: 현재 헤어라인~가마 사이 윗머리 (가마 원 제외). 후퇴 영역(4)은 빼고 센다.
+  const Rv = G * V_RADIUS;
+  const inV = (x, y) => (x - vx) ** 2 + (y - vy) ** 2 <= Rv * Rv;
+  const inT = (x, y) => x >= x0 && x <= x1 && hairRow[x] >= 0 && y >= hairRow[x] && y <= vy && !inV(x, y);
+  let vHead = 0, vScalp = 0, tHead = 0, tScalp = 0;
+  for (let y = 0; y < G; y++) {
+    for (let x = 0; x < G; x++) {
+      const v = at(x, y);
+      if (v !== CELL.hair && v !== CELL.scalp) continue;
+      if (inV(x, y)) { vHead++; if (v === CELL.scalp) vScalp++; }
+      else if (inT(x, y)) { tHead++; if (v === CELL.scalp) tScalp++; }
+    }
+  }
+  const V = vHead > G * G * 0.02 ? (vScalp / vHead) * 100 : 0;
+  const T = tHead > G * G * 0.02 ? (tScalp / tHead) * 100 : 0;
+
+  return {
+    P, uPos, shape, V, T,
+    vtConnected: vScalp > 0 && tScalp > 0 && scalpConnected(grid, G, inV, inT),
+    geom: { vx, vy, Rv, x0, x1, hairRow },
+  };
+}
+
+// 가마 원의 가장 큰 두피 덩어리가 윗머리 두피의 절반 이상을 덮으면 "이어져 있다"
+function scalpConnected(grid, G, inV, inT) {
   const labels = new Int32Array(G * G).fill(-1);
-  const sizes = [];
-  const touchesFront = [];
   const stack = [];
+  let id = 0;
+  const vCount = [], tCount = [];
+  let tTotal = 0;
   for (let s = 0; s < G * G; s++) {
-    if (grid[s] !== 3 || labels[s] !== -1) continue;
-    const id = sizes.length;
-    let size = 0, front = false;
+    if (grid[s] !== CELL.scalp || labels[s] !== -1) continue;
+    vCount[id] = 0; tCount[id] = 0;
     labels[s] = id; stack.push(s);
     while (stack.length) {
       const k = stack.pop();
-      size++;
       const x = k % G, y = (k / G) | 0;
-      if (y < G * 0.15) front = true;
+      if (inV(x, y)) vCount[id]++;
+      else if (inT(x, y)) { tCount[id]++; tTotal++; }
       for (const nk of [x > 0 ? k - 1 : -1, x < G - 1 ? k + 1 : -1, y > 0 ? k - G : -1, y < G - 1 ? k + G : -1]) {
-        if (nk >= 0 && grid[nk] === 3 && labels[nk] === -1) { labels[nk] = id; stack.push(nk); }
+        if (nk >= 0 && grid[nk] === CELL.scalp && labels[nk] === -1) { labels[nk] = id; stack.push(nk); }
       }
     }
-    sizes.push(size); touchesFront.push(front);
+    id++;
   }
-  const minSize = G * G * 0.01;
-  // 정수리 영역: 중앙에서 가장 가까운 충분히 큰 덩어리
-  let crownId = -1, best = Infinity;
-  for (let k = 0; k < G * G; k++) {
-    const id = labels[k];
-    if (id < 0 || sizes[id] < minSize) continue;
-    const d = Math.hypot((k % G) - G / 2, ((k / G) | 0) - G / 2);
-    if (d < best) { best = d; crownId = id; }
-  }
-  if (crownId < 0 || best > G * 0.3) return 'present';
-  const frontIds = new Set(sizes.map((s, id) => (touchesFront[id] && s >= minSize ? id : -1)).filter((v) => v >= 0));
-  if (frontIds.size === 0) return 'present';
-  if (frontIds.has(crownId)) return 'none';
-
-  // 앞쪽 영역에서 출발해 정수리 영역까지 BFS 거리
-  const dist = new Int32Array(G * G).fill(-1);
-  const q = new Int32Array(G * G);
-  let head = 0, tail = 0;
-  for (let k = 0; k < G * G; k++) if (frontIds.has(labels[k])) { dist[k] = 0; q[tail++] = k; }
-  let gap = Infinity;
-  while (head < tail) {
-    const k = q[head++];
-    if (labels[k] === crownId) { gap = dist[k]; break; }
-    const x = k % G, y = (k / G) | 0;
-    for (const nk of [x > 0 ? k - 1 : -1, x < G - 1 ? k + 1 : -1, y > 0 ? k - G : -1, y < G - 1 ? k + G : -1]) {
-      if (nk >= 0 && grid[nk] !== 0 && dist[nk] === -1) { dist[nk] = dist[k] + 1; q[tail++] = nk; }
-    }
-  }
-  const g = gap / G;
-  if (g < 0.06) return 'none';
-  if (g < 0.15) return 'thin';
-  return 'present';
-}
-
-// 가르마 폭 (원 지름 대비 %). 세로·가로 중 두피 줄기가 더 길게 이어지는 방향을 가르마로 본다.
-function partingWidth(grid, G) {
-  const measure = (vertical) => {
-    const widths = [];
-    let hit = 0, lines = 0;
-    for (let a = Math.floor(G * 0.25); a < G * 0.75; a++) {
-      lines++;
-      let bestW = 0, bestD = Infinity, run = 0, start = 0;
-      for (let b = 0; b <= G; b++) {
-        const v = b < G ? (vertical ? grid[a * G + b] : grid[b * G + a]) : 0;
-        if (v === 3) { if (run === 0) start = b; run++; }
-        else if (run > 0) {
-          const mid = start + run / 2;
-          const d = Math.abs(mid - G / 2);
-          if (d < G * 0.3 && d < bestD) { bestD = d; bestW = run; }
-          run = 0;
-        }
-      }
-      if (bestW > 0) { hit++; widths.push(bestW); }
-    }
-    if (hit / lines < 0.3) return { coverage: hit / lines, width: 0 };
-    widths.sort((x, y) => x - y);
-    const width = widths[widths.length >> 1];
-    // 가르마는 길고 가는 줄기. 둥근 정수리 탈모 부위(폭 ≈ 길이)는 가르마로 치지 않는다 (C가 담당).
-    if (hit < width * 3) return { coverage: hit / lines, width: 0 };
-    return { coverage: hit / lines, width };
-  };
-  const v = measure(true);  // 행마다 가로 폭 → 세로로 뻗은 가르마
-  const h = measure(false);
-  const pick = v.coverage >= h.coverage ? v : h;
-  return (pick.width / G) * 100;
+  if (!tTotal) return false;
+  let best = -1;
+  for (let i = 0; i < id; i++) if (best < 0 || vCount[i] > vCount[best]) best = i;
+  return best >= 0 && vCount[best] > 0 && tCount[best] / tTotal >= 0.5;
 }

@@ -1,10 +1,16 @@
 import { loadModels, fileToCanvas, analyzeFront, analyzeCrown, QualityError, CROWN_CIRCLE } from './vision.js';
-import { judgeMale, judgeFemale, progression, NORWOOD_LABEL, LUDWIG_LABEL } from './judge.js';
-import { STAGES, FEMALE_DESC, PROGRESSION, FAIL_MESSAGES, ANALYZING_STEPS, DISCLAIMER, PRIVACY_NOTE } from './content.js';
-import { stageSVG, drawFrontOverlay, drawCrownOverlay } from './render.js';
+import { judge, norwoodRef, progression, expectation, focusFromAreas } from './judge.js';
+import {
+  STAGES, TYPES, EXTRA_NOTES, PROGRESSION, FAIL_MESSAGES, ANALYZING_STEPS, DISCLAIMER, PRIVACY_NOTE, STATS_NOTE,
+  AREAS, AREA_STATUS, FOCUS_LABELS, REP_AREA, SCALP_TYPES, SCALP_TIPS, SYMPTOMS, SYMPTOM_CONSULT, SYMPTOM_CONSULT_KEYS,
+  EXPECTATION, EXPECTATION_SHEDDING, EXPECTATION_BOOSTED,
+} from './content.js';
+import { stageArt, eggLineup, drawFrontOverlay, drawCrownOverlay } from './render.js';
+import { icon, hydrateIcons } from './icons.js';
 import { GUIDES } from './guides.js';
 import { shareLink, saveCard } from './share.js';
 import { track } from './track.js';
+import { countResult } from './stats.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -13,7 +19,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ───────────────────────── 상태 ─────────────────────────
 // 사진·측정값은 이 메모리 객체에만 있고, 탭을 닫으면 사라진다.
 const state = {
-  info: { gender: null, age: null, family: null },
+  info: { suspect: null, gender: null, age: null, family: null },
+  concern: emptyConcern(), // 의심 중(suspect=yes)일 때만 채운다
   front: null, frontCanvas: null,
   crown: null, crownCanvas: null,
   result: null,
@@ -24,6 +31,10 @@ const state = {
 // ?debug=1 : 결과 화면에 측정값 표시 (기준값 보정용, 팀 내부 테스트 전용)
 const DEBUG = new URLSearchParams(location.search).has('debug');
 if (DEBUG) window.__cub = state;
+
+function emptyConcern() {
+  return { areas: [], scalp: null, symptoms: [], shedding: null };
+}
 
 function pickVariant() {
   const q = new URLSearchParams(location.search).get('variant');
@@ -39,13 +50,37 @@ function pickVariant() {
 
 // ───────────────────────── 화면 전환 ─────────────────────────
 let current = { screen: null, step: null };
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function show(screen, step = null) {
-  current = { screen, step };
-  $$('.screen').forEach((s) => { s.hidden = s.dataset.screen !== screen; });
-  if (screen === 'capture') renderCapture(step);
-  if (screen === 'result') renderResult();
-  window.scrollTo(0, 0);
+  const apply = () => {
+    current = { screen, step };
+    $$('.screen').forEach((s) => { s.hidden = s.dataset.screen !== screen; });
+    if (screen === 'capture') renderCapture(step);
+    if (screen === 'result') renderResult();
+    updateProgress();
+    window.scrollTo(0, 0);
+  };
+  // 화면 전환은 View Transition 으로 (미지원 브라우저는 CSS 등장 애니메이션)
+  if (document.startViewTransition && current.screen && !reduceMotion()) {
+    document.documentElement.classList.add('vt');
+    document.startViewTransition(apply);
+  } else {
+    apply();
+  }
+}
+
+// 상단 달걀 진행 표시: 의심 여부 → 기본 정보 → (고민 체크) → 정면 → 정수리
+function updateProgress() {
+  const steps = ['suspect', 'info', ...(needsConcern() ? ['concern'] : []), 'front', 'crown'];
+  const names = { suspect: '의심 여부', info: '기본 정보', concern: '고민 체크', front: '정면 사진', crown: '정수리 사진' };
+  const key = current.screen === 'capture' ? current.step : current.screen;
+  const idx = steps.indexOf(key);
+  if (idx < 0) return;
+  const pad = (n) => String(n).padStart(2, '0');
+  const sec = $(`[data-screen="${current.screen}"]`);
+  $('.eggbar', sec).innerHTML = steps.map((_, i) => `<i class="${i < idx ? 'done' : i === idx ? 'now' : ''}"></i>`).join('');
+  $('.progress', sec).textContent = `${pad(idx + 1)} / ${pad(steps.length)} · ${names[key]}`;
 }
 
 function go(screen, step = null, { replace = false } = {}) {
@@ -59,36 +94,99 @@ window.addEventListener('popstate', (e) => {
   if (screen === 'analyzing') { screen = 'capture'; step = 'crown'; }
   if (screen === 'result' && !state.result) screen = 'landing';
   if (screen === 'capture' && step === 'crown' && !state.front) step = 'front';
-  if ((screen === 'capture' || screen === 'info') && !infoComplete() && screen !== 'info') screen = 'info';
+  if (['info', 'concern', 'capture'].includes(screen) && !state.info.suspect) screen = 'suspect';
+  else if ((screen === 'capture' || screen === 'concern') && !infoComplete()) screen = 'info';
+  else if (screen === 'concern' && !needsConcern()) screen = 'info';
+  else if (screen === 'capture' && needsConcern() && !concernComplete()) screen = 'concern';
   show(screen, step);
 });
 
 // ───────────────────────── 랜딩 ─────────────────────────
 function initLanding() {
-  const art = $('#landingArt');
+  // 큰 달걀 5장을 겹쳐 두고 하나씩 켠다 + 아래 라인업에서 같은 달걀에 스포트라이트
+  const hero = $('#heroEgg');
+  hero.innerHTML = [1, 2, 3, 4, 5].map((s) => stageArt(s, { size: 300 })).join('');
+  $('#landingLineup').innerHTML = eggLineup(0, { names: false });
+  const imgs = $$('img', hero);
+  const slots = $$('#landingLineup .egg-slot');
   let s = 1;
-  const tick = () => { art.innerHTML = stageSVG(s); s = (s % 5) + 1; };
+  const tick = () => {
+    imgs.forEach((im, i) => im.classList.toggle('on', i + 1 === s));
+    slots.forEach((el, i) => el.classList.toggle('is-lit', i + 1 === s));
+    $('#heroCaption').innerHTML = `<b>LV.${String(s).padStart(2, '0')}</b>${STAGES[s].name}`;
+    s = (s % 5) + 1;
+  };
   tick();
-  setInterval(() => { if (current.screen === 'landing') tick(); }, 1100);
+  if (!reduceMotion()) setInterval(() => { if (current.screen === 'landing') tick(); }, 2200);
+  hero.addEventListener('click', () => {
+    hero.classList.remove('wobble');
+    void hero.offsetWidth; // 애니메이션 재시작
+    hero.classList.add('wobble');
+  });
   $$('[data-disclaimer]').forEach((el) => { el.textContent = DISCLAIMER; });
   $$('[data-privacy]').forEach((el) => { el.textContent = PRIVACY_NOTE; });
 }
 
-// ───────────────────────── 기본 정보 ─────────────────────────
+// ───────────────────────── 기본 정보 · 고민 체크 ─────────────────────────
 const infoComplete = () => Object.values(state.info).every(Boolean);
+const needsConcern = () => state.info.suspect === 'yes';
+const concernComplete = () => {
+  const c = state.concern;
+  return c.areas.length > 0 && !!c.scalp && c.symptoms.length > 0 && !!c.shedding;
+};
+
+function syncChoices(group) {
+  const owner = group.closest('[data-screen]').dataset.screen === 'concern' ? state.concern : state.info;
+  const v = owner[group.dataset.field];
+  $$('button', group).forEach((b) => {
+    const on = Array.isArray(v) ? v.includes(b.dataset.value) : v === b.dataset.value;
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
 
 function initInfo() {
   $$('.choices').forEach((group) => {
     const field = group.dataset.field;
+    const isConcern = group.closest('[data-screen]').dataset.screen === 'concern';
+    const multi = group.hasAttribute('data-multi');
     group.addEventListener('click', (e) => {
       const btn = e.target.closest('button');
       if (!btn) return;
-      state.info[field] = btn.dataset.value;
-      $$('button', group).forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+      const owner = isConcern ? state.concern : state.info;
+      const val = btn.dataset.value;
+      if (multi) {
+        // 여러 개 선택. data-exclusive(없음)는 다른 것과 함께 고를 수 없다
+        const excl = $$('[data-exclusive]', group).map((b) => b.dataset.value);
+        let list = owner[field];
+        if (list.includes(val)) list = list.filter((x) => x !== val);
+        else if (excl.includes(val)) list = [val];
+        else list = [...list.filter((x) => !excl.includes(x)), val];
+        owner[field] = list;
+      } else {
+        owner[field] = val;
+      }
+      syncChoices(group);
+      if (field === 'suspect') onSuspectChange();
       $('[data-action="info-next"]').disabled = !infoComplete();
+      $('[data-action="concern-next"]').disabled = !concernComplete();
     });
-    $$('button', group).forEach((b) => b.setAttribute('aria-pressed', 'false'));
+    syncChoices(group);
   });
+}
+
+// 의심 여부 화면은 질문 하나뿐이라, 고르면 눌린 모습을 잠깐 보여준 뒤 바로 기본 정보로 간다.
+let suspectTimer = 0;
+function onSuspectChange() {
+  if (!needsConcern()) {
+    state.concern = emptyConcern();
+    $$('[data-screen="concern"] .choices').forEach(syncChoices);
+  }
+  clearTimeout(suspectTimer); // 연달아 눌러도 한 번만 넘어간다
+  suspectTimer = setTimeout(() => {
+    if (current.screen !== 'suspect') return;
+    track('suspect_answer', { suspect: state.info.suspect });
+    go('info');
+  }, reduceMotion() ? 0 : 320);
 }
 
 // ───────────────────────── 촬영 ─────────────────────────
@@ -96,9 +194,21 @@ function setStatus(kind, html) {
   const el = $('#capStatus');
   if (!kind) { el.hidden = true; return; }
   el.className = `cap-status ${kind}`;
-  el.innerHTML = html;
+  const ico = kind === 'ok' ? icon('check', 18) : kind === 'err' ? icon('alert', 18) : '';
+  el.innerHTML = ico + `<span>${html}</span>`;
   el.hidden = false;
+  if (kind === 'err') {
+    const f = $('#capFrame');
+    f.classList.remove('shake');
+    void f.offsetWidth;
+    f.classList.add('shake');
+  }
 }
+const OK_MSG = '좋아요! 잘 찍혔어요';
+const setShootLabel = (t) => { $('#capShootLabel .lbl').textContent = t; };
+const setNextLabel = (step) => {
+  $('#capNext').innerHTML = `${step === 'front' ? '다음' : '결과 보기'} ${icon('arrow')}`;
+};
 
 function previewCanvas(canvas, step) {
   const size = 720;
@@ -112,7 +222,7 @@ function previewCanvas(canvas, step) {
     const r = Math.min(canvas.width, canvas.height) * CROWN_CIRCLE.radiusRatio;
     const sx = canvas.width / 2 - r, sy = canvas.height / 2 - r;
     ctx.drawImage(canvas, sx, sy, 2 * r, 2 * r, 0, 0, size, size);
-    ctx.strokeStyle = '#FF6B3D'; ctx.lineWidth = 6; ctx.setLineDash([24, 16]);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.setLineDash([18, 14]);
     ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2 - 4, 0, Math.PI * 2); ctx.stroke();
   } else {
     const k = Math.min(size / canvas.width, size / canvas.height);
@@ -124,15 +234,16 @@ function previewCanvas(canvas, step) {
 
 function renderCapture(step) {
   const g = GUIDES[step];
-  $('#capStep').textContent = g.step;
   $('#capTitle').textContent = g.title;
+  $('#capHud').textContent = step === 'front' ? 'Front' : 'Crown';
   $('#capTips').innerHTML = g.tips.map((t) => `<li>${t}</li>`).join('');
   $('#capShoot').setAttribute('capture', g.capture);
   const done = state[step];
   const guide = $('#capGuide');
+  $('#capFrame').classList.toggle('has-photo', !!done);
   if (done) {
     guide.replaceChildren(previewCanvas(state[`${step}Canvas`], step));
-    setStatus('ok', '✓ 좋아요! 잘 찍혔어요');
+    setStatus('ok', OK_MSG);
   } else {
     guide.innerHTML = g.svg;
     setStatus(null);
@@ -142,8 +253,8 @@ function renderCapture(step) {
     state.pendingError = null;
   }
   $('#capNext').hidden = !done;
-  $('#capNext').textContent = step === 'front' ? '다음' : '결과 보기';
-  $('#capShootLabel').lastChild.textContent = done ? '다시 찍기' : '촬영하기';
+  setNextLabel(step);
+  setShootLabel(done ? '다시 찍기' : '촬영하기');
 }
 
 async function handleFile(file) {
@@ -160,22 +271,22 @@ async function handleFile(file) {
   try {
     const canvas = await fileToCanvas(file);
     $('#capGuide').replaceChildren(previewCanvas(canvas, step));
+    $('#capFrame').classList.add('has-photo');
     setStatus('busy', '<span class="spinner"></span>사진 확인 중…');
     const result = step === 'front' ? await analyzeFront(canvas) : await analyzeCrown(canvas);
-    if (step === 'front' && result.hairlineMissing && state.info.gender === 'f') throw new QualityError('hairline');
     if (current.step !== step) return; // 처리 중 화면이 바뀜
     state[step] = result;
     state[`${step}Canvas`] = canvas;
-    setStatus('ok', '✓ 좋아요! 잘 찍혔어요');
+    setStatus('ok', OK_MSG);
     $('#capNext').hidden = false;
-    $('#capShootLabel').lastChild.textContent = '다시 찍기';
+    setShootLabel('다시 찍기');
     track('photo_pass', { step });
   } catch (err) {
     const reason = err instanceof QualityError ? err.reason : 'model';
     const msg = FAIL_MESSAGES[reason] || '분석 도구를 불러오지 못했어요. 네트워크를 확인하고 다시 시도해주세요';
     if (reason === 'model') console.error(err);
     setStatus('err', msg);
-    $('#capShootLabel').lastChild.textContent = '다시 찍기';
+    setShootLabel('다시 찍기');
     track('photo_fail', { step, reason });
   } finally {
     state.busy = false;
@@ -200,94 +311,265 @@ function initCapture() {
 // ───────────────────────── 검사 중 ─────────────────────────
 async function runAnalysis() {
   go('analyzing', null, { replace: true });
-  $('#scanArt').innerHTML = stageSVG(2);
-  const dots = $$('.dots i');
   const text = $('#analyzeText');
+  const lab = $('#lab');
+  const steps = $('#labSteps');
+  steps.innerHTML = ANALYZING_STEPS.map(() => '<li></li>').join('');
+  const bars = $$('li', steps);
 
   const { info, front, crown } = state;
-  let judged, service, scaleRef;
-  if (info.gender === 'f') {
-    judged = judgeFemale(crown);
-    service = judged.service;
-    scaleRef = judged.ludwig === 0 ? '루드비히 기준 정상 범위' : `루드비히 ${LUDWIG_LABEL[judged.ludwig]}형 참고`;
-  } else {
-    judged = judgeMale(front, crown);
-    service = judged.service;
-    scaleRef = judged.norwood ? `노우드-해밀턴 ${NORWOOD_LABEL[judged.norwood]}형 참고` : '';
-  }
+  const concern = needsConcern() ? state.concern : null;
+  const focus = concern ? focusFromAreas(concern.areas) : new Set();
+  const judged = judge(front, crown, focus);
 
-  // 최소 3초 노출: 문구 4개 × 800ms
+  // 내 사진 위에 실제 측정 결과를 단계적으로 그린다 (사진은 이 화면에서만 쓰고 저장하지 않음)
+  const plates = setupLabPlates(judged);
+  lab.classList.remove('done');
+  const t0 = performance.now();
+  const clock = setInterval(() => { $('#labClock').textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s`; }, 100);
+
+  // 최소 3초 노출: 문구 4개 × 900ms
   for (let i = 0; i < ANALYZING_STEPS.length; i++) {
     text.textContent = ANALYZING_STEPS[i];
-    dots.forEach((d, k) => d.classList.toggle('on', k <= i));
-    if (i === 2) $('#scanArt').innerHTML = stageSVG(3);
-    await sleep(800);
+    bars.forEach((b, k) => b.classList.toggle('on', k <= i));
+    if (i === 0) plates.front.classList.add('on');
+    if (i === 1) plates.front.classList.add('drawn');
+    if (i === 2) { plates.front.classList.remove('on'); plates.crown.classList.add('on'); setTimeout(() => plates.crown.classList.add('drawn'), 350); }
+    if (i === 3) lab.classList.add('done');
+    await sleep(900);
   }
+  clearInterval(clock);
 
   if (judged.retake) {
-    state.front = null;
-    state.frontCanvas = null;
-    state.pendingError = 'hairline';
-    track('photo_fail', { step: 'front', reason: 'hairline_after_crown' });
-    go('capture', 'front', { replace: true });
+    // 판정 규칙 5: 정면·정수리 둘 다로 기본형을 못 정하면 재촬영
+    const step = judged.retake;
+    state[step] = null;
+    state[`${step}Canvas`] = null;
+    state.pendingError = step === 'front' ? 'hairline' : 'crown_again';
+    track('photo_fail', { step, reason: 'judge_retake' });
+    go('capture', step, { replace: true });
     return;
   }
-  state.result = { service, scaleRef, prog: progression(info, service), female: info.gender === 'f' };
+  const norwood = info.gender === 'm' ? norwoodRef(judged) : null;
+  state.result = {
+    judged, level: judged.level, norwood, concern, focus,
+    prog: progression(info, judged.level, concern),
+    expect: expectation(info, concern, judged),
+    counted: false,
+  };
   go('result', null, { replace: true });
 }
 
+// 검사 화면 도판: 원본 사진(base) 위에 측정 오버레이(ov)를 겹친다. 재촬영 판정이면 원본만.
+function setupLabPlates(judged) {
+  const front = $('[data-plate="front"]'), crown = $('[data-plate="crown"]');
+  [front, crown].forEach((p) => { p.className = p.className.replace(/\s*(on|drawn)\b/g, ''); p.replaceChildren(); });
+  try {
+    const geom = state.front.geom;
+    const base = cropFace(state.frontCanvas, geom);
+    base.className = 'base';
+    front.append(base);
+    if (!judged.retake) {
+      const ov = cropFace(drawFrontOverlay(state.frontCanvas, state.front, judged, state.variant), geom);
+      ov.className = 'ov';
+      front.append(ov);
+    }
+  } catch (e) { console.warn(e); }
+  try {
+    const { cx, cy, r } = state.crown.grid;
+    const size = Math.round(2 * r);
+    const base = document.createElement('canvas');
+    base.width = size; base.height = size;
+    base.getContext('2d').drawImage(state.crownCanvas, cx - r, cy - r, size, size, 0, 0, size, size);
+    base.className = 'base';
+    crown.append(base);
+    if (!judged.retake) {
+      const ov = drawCrownOverlay(state.crownCanvas, state.crown, judged);
+      ov.className = 'ov';
+      crown.append(ov);
+    }
+  } catch (e) { console.warn(e); }
+  return { front, crown };
+}
+
 // ───────────────────────── 결과 ─────────────────────────
-const STAGE_NAMES = [1, 2, 3, 4, 5].map((s) => STAGES[s].name);
+
+function typeLabel(judged) {
+  return [TYPES[judged.rep].label, ...judged.extra.map((k) => `+ ${EXTRA_NOTES[k].label}`)].join(' ');
+}
+
+const fill = (tpl, vars) => tpl.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '');
+const joinKo = (arr) => arr.join(', ');
+
+function expectBanner(st) {
+  const { judged, concern, expect } = state.result;
+  const e = EXPECTATION[expect.match];
+  const hitOnly = ['confirmed', 'early'].includes(expect.match);
+  const worried = expect.areas.filter((a) => !hitOnly || a.status >= 1);
+  const vars = {
+    areas: joinKo(worried.map((a) => AREAS[a.key].short)),
+    other: REP_AREA[judged.rep],
+  };
+  const lines = [fill(e.text, vars)];
+  if (['relief', 'fine'].includes(expect.match) && concern?.shedding === 'lots') lines.push(EXPECTATION_SHEDDING);
+  if (judged.boosted.length) lines.push(fill(EXPECTATION_BOOSTED, { parts: joinKo(judged.boosted.map((k) => FOCUS_LABELS[k])) }));
+  const guess = concern
+    ? joinKo(expect.areas.map((a) => AREAS[a.key].short)) + ' 걱정'
+    : '그냥 궁금했어요';
+  return `<div class="expect will-in">
+    <div class="expect-vs">
+      <div><small>내 예상</small><b>${guess}</b></div>
+      <div class="arrow">${icon('arrow', 18)}</div>
+      <div class="res"><small>결과</small><b>${e.title}</b></div>
+    </div>
+    <div class="expect-body">${lines.map((l) => `<p>${l}</p>`).join('')}</div>
+  </div>`;
+}
+
+function concernCards(judged) {
+  const { concern, expect } = state.result;
+  if (!concern) return '';
+  const marked = new Set([judged.rep, ...judged.extra]);
+  const rows = expect.areas.map(({ key, status }) => {
+    const a = AREAS[key];
+    const stx = AREA_STATUS[Math.min(status, 2)];
+    const onPhoto = status > 0 && ((key === 'crown' && marked.has('V')) || (key === 'part' && marked.has('F'))
+      || (key === 'diffuse' && (marked.has('V') || marked.has('F'))));
+    const note = a.note || (onPhoto ? '사진에 표시했어요' : '');
+    return `<li><span>${a.label}${note ? `<span class="note">${note}</span>` : ''}</span><span class="chip ${stx.tone}">${stx.label}</span></li>`;
+  }).join('');
+  const sym = concern.symptoms.filter((k) => k !== 'none').map((k) => SYMPTOMS[k]);
+  const symLine = sym.length ? `<p class="type-extra">요즘 느끼는 증상: ${joinKo(sym)}</p>` : '';
+  return `
+    <div class="card will-in"><h3>걱정한 부위 체크</h3><ul class="area-list">${rows}</ul></div>
+    <div class="card will-in"><h3>두피 상태</h3><p class="h">${SCALP_TYPES[concern.scalp]}</p><p>${SCALP_TIPS[concern.scalp]}</p>${symLine}</div>`;
+}
+
+function consultCard(st) {
+  const sym = state.result.concern?.symptoms.some((k) => SYMPTOM_CONSULT_KEYS.includes(k));
+  const lines = [st.consult, sym ? SYMPTOM_CONSULT : null].filter(Boolean);
+  if (!lines.length) return '';
+  return `<div class="card consult will-in"><h3>상담 안내</h3>${lines.map((l) => `<p>${l}</p>`).join('')}</div>`;
+}
+
+function progCard(prog) {
+  if (!prog.level) return '';
+  const p = PROGRESSION[prog.level];
+  const gauge = prog.level === 'teen' ? '' : `<div class="gauge" role="img" aria-label="진행 가능성 ${p.label}">${['low', 'mid', 'high']
+    .map((k) => `<span class="${k === prog.level ? 'on' : ''}">${PROGRESSION[k].label}</span>`).join('')}</div>`;
+  const why = prog.reasons.length ? `<p class="prog-why">${prog.reasons.join(' · ')}</p>` : '';
+  return `<div class="card will-in"><h3>진행 가능성</h3><p class="h">${p.label}</p>${gauge}<p>${p.text}</p>${why}</div>`;
+}
+
+const todayLabel = () => {
+  const d = new Date();
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// 리빌: 라인업 위 스포트라이트가 1→내 레벨까지 이동 → 큰 달걀 착지 → 이름 등장 → 레벨 색 번짐
+async function revealResult(root, level) {
+  const screen = root.closest('.screen');
+  const slots = $$('.lineup .egg-slot', root);
+  const finish = () => {
+    slots.forEach((el) => el.classList.remove('is-lit'));
+    slots[level - 1].classList.add('is-me');
+    root.classList.remove('pre');
+    screen.classList.add('lit');
+  };
+  if (state.result.revealed || reduceMotion()) { finish(); return; }
+  state.result.revealed = true;
+  await sleep(250);
+  for (let s = 1; s <= level; s++) {
+    if (!root.isConnected) return;
+    slots.forEach((el, i) => el.classList.toggle('is-lit', i + 1 === s));
+    await sleep(s === level ? 120 : 260);
+  }
+  finish();
+  const egg = $('.big-egg', root);
+  setTimeout(() => egg.classList.add('land'), 380);
+  try { navigator.vibrate?.(30); } catch { /* 미지원 */ }
+}
+
+function observeIn(root) {
+  const els = $$('.will-in', root);
+  if (!('IntersectionObserver' in window) || reduceMotion()) { els.forEach((el) => el.classList.add('in')); return; }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((en) => { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+  }, { rootMargin: '0px 0px -8% 0px' });
+  els.forEach((el, i) => { el.style.setProperty('--i', i % 3); io.observe(el); });
+}
 
 function renderResult() {
-  const { service: s, scaleRef, prog, female } = state.result;
+  const { judged, level: s, norwood, prog } = state.result;
   const st = STAGES[s];
-  const desc = female ? FEMALE_DESC[s] : st.desc;
-  const progCard = (() => {
-    if (!prog.level) return '';
-    const p = PROGRESSION[prog.level];
-    const why = prog.reasons.length ? `<p class="prog-why">${prog.reasons.join(' · ')}</p>` : '';
-    return `<div class="card"><h3>진행 가능성</h3><p class="prog-level">${p.label}</p><p>${p.text}</p>${why}</div>`;
-  })();
+  const typeNotes = judged.extra.map((k) => `<p class="type-extra">${EXTRA_NOTES[k].desc}</p>`).join('');
+  const frontCap = ['M', 'C'].includes(judged.basic.type)
+    ? (state.variant === 'B' ? '등급별 헤어라인' : '내 등급 헤어라인') : '내 헤어라인';
+  const typeChips = [TYPES[judged.rep].label, ...judged.extra.map((k) => `+ ${EXTRA_NOTES[k].label}`)];
+  const screen = $('[data-screen="result"]');
+  screen.style.setProperty('--lv', st.color);
+  screen.classList.remove('lit');
 
   $('#resultBody').innerHTML = `
-    <div class="result-head">
-      <span class="badge" style="background:${st.color}">${s}단계</span>
-      <h1 class="stage-name">${st.name}</h1>
-      <p class="tone">${st.tone}</p>
-      ${scaleRef ? `<p class="scale-ref">${scaleRef}</p>` : ''}
+    <article class="result pre" aria-label="${typeLabel(judged)} 레벨 ${s} ${st.name}">
+    <header class="result-hero">
+      <p class="eyebrow rule"><span>Specimen Report</span><span>${todayLabel()}</span></p>
+      <div class="big-egg">${stageArt(s, { size: 250 })}</div>
+      ${eggLineup(0)}
+      <div class="reveal-text">
+        <p class="level-chip"><i></i>레벨 ${s} / 5</p>
+        <h1 class="stage-name">${st.name}</h1>
+        <ul class="type-chips">${typeChips.map((t) => `<li>${t}</li>`).join('')}</ul>
+        <p class="tone">${st.tone}</p>
+        ${norwood ? `<p class="scale-ref">노우드-해밀턴 기준으로는 대략 ${norwood}형에 가까워요 (참고)</p>` : ''}
+      </div>
+    </header>
+    ${expectBanner(st)}
+    <section class="figs will-in">
+      <figure class="fig"><div id="ovFront"></div><figcaption><b>FIG.1</b>${frontCap}</figcaption></figure>
+      <figure class="fig"><div id="ovCrown"></div><figcaption><b>FIG.2</b>정수리 노출 영역</figcaption></figure>
+    </section>
+    <p class="photo-note">${icon('lock', 13)}사진은 이 화면에만 보이고 저장되지 않아요</p>
+    <div class="card will-in"><h3>내 상태</h3><p class="h">${st.name}</p><p>${st.desc}</p></div>
+    <div class="card will-in"><h3>내 유형</h3><p class="h">${TYPES[judged.rep].label}</p><p>${TYPES[judged.rep].desc}</p>${typeNotes}</div>
+    ${concernCards(judged)}
+    ${consultCard(st)}
+    ${progCard(prog)}
+    <div class="actions-bar">
+      <button class="btn primary" data-action="share">${icon('share')}결과 공유하기</button>
+      <button class="btn icon" data-action="save" aria-label="이미지 저장">${icon('download')}</button>
     </div>
-    <div class="meter">${[1, 2, 3, 4, 5].map((k) => `<i style="${k <= s ? `background:${st.color}` : ''}"></i>`).join('')}</div>
-    <div class="meter-labels">${STAGE_NAMES.map((n, i) => `<span class="${i + 1 === s ? 'me' : ''}">${n}</span>`).join('')}</div>
-    <div class="photos">
-      <figure><div id="ovFront"></div><figcaption>${female ? '내 헤어라인' : state.variant === 'B' ? '단계별 헤어라인' : '내 단계 헤어라인'}</figcaption></figure>
-      <figure><div id="ovCrown"></div><figcaption>정수리 노출 영역</figcaption></figure>
-    </div>
-    <p class="photo-note">사진은 이 화면에만 보이고 저장되지 않아요</p>
-    <div class="card"><h3>내 상태</h3><p>${desc}</p></div>
-    ${st.consult ? `<div class="card consult"><h3>상담 안내</h3><p>${st.consult}</p></div>` : ''}
-    ${progCard}
-    <div class="actions">
-      <button class="btn primary" data-action="share">공유하기</button>
-      <button class="btn" data-action="save">이미지 저장</button>
-      <button class="btn ghost full" data-action="retry">다시 하기</button>
-    </div>
-    <footer class="disclaimer">${DISCLAIMER}</footer>
+    <div class="retry-row"><button class="btn ghost" data-action="retry">${icon('retry', 18)}다시 하기</button></div>
+    <footer class="disclaimer">${DISCLAIMER}<br>${STATS_NOTE}</footer>
     ${DEBUG ? `<pre class="debug">${debugText()}</pre>` : ''}
+    </article>
   `;
-  const fc = drawFrontOverlay(state.frontCanvas, state.front, s, state.variant, female);
+  const fc = drawFrontOverlay(state.frontCanvas, state.front, judged, state.variant);
   $('#ovFront').replaceWith(cropFace(fc, state.front.geom));
-  $('#ovCrown').replaceWith(drawCrownOverlay(state.crownCanvas, state.crown, s));
-  track('result_view', { stage: s, variant: state.variant });
+  $('#ovCrown').replaceWith(drawCrownOverlay(state.crownCanvas, state.crown, judged));
+  const root = $('#resultBody .result');
+  revealResult(root, s);
+  observeIn(root);
+  if (!state.result.counted) {
+    // 결과 화면 진입 시 1회 (뒤로·앞으로 가기로 다시 그려도 다시 세지 않는다)
+    state.result.counted = true;
+    countResult({
+      level: s, type: judged.rep, gender: state.info.gender, age: state.info.age,
+      suspect: needsConcern() ? 'y' : 'n', match: state.result.expect.match,
+    });
+    track('result_view', { stage: s, type: judged.rep, variant: state.variant, match: state.result.expect.match });
+  }
 }
 
 function debugText() {
-  const f = state.front, c = state.crown, r = (v, d = 2) => (v == null ? '–' : v.toFixed(d));
+  const f = state.front, c = state.crown, j = state.result.judged, r = (v, d = 2) => (v == null ? '–' : v.toFixed(d));
   return [
-    `variant ${state.variant} · ${state.result.scaleRef}`,
-    `F ${r(f.F)}  M ${r(f.M)}  hairlineMissing ${f.hairlineMissing}`,
-    `C ${r(c.C, 1)}%  B ${c.B}  part ${r(c.part, 1)}%`,
+    `variant ${state.variant} · ${j.code} · rep ${j.rep} · level ${j.level} · norwood ${state.result.norwood ?? '–'}`,
+    `H ${r(f.H)}  M ${r(f.M)}  hairlineMissing ${f.hairlineMissing}`,
+    `P ${r(c.P, 1)}%  uPos ${r(c.uPos, 1)}%  shape ${c.shape}  V ${r(c.V, 1)}%  T ${r(c.T, 1)}%  vtConnected ${c.vtConnected}`,
     `progression ${JSON.stringify(state.result.prog)}`,
+    `focus [${[...state.result.focus].join(',')}] · boosted [${j.boosted.join(',')}] · match ${state.result.expect.match}`,
+    `concern ${JSON.stringify(state.result.concern)}`,
   ].join('\n');
 }
 
@@ -313,22 +595,27 @@ document.addEventListener('click', (e) => {
   const a = el.dataset.action;
   if (a === 'start') {
     track('start_click');
-    go('info');
+    go('suspect');
     loadModels().catch(() => {}); // 정보 입력 중 미리 로드
   } else if (a === 'back') {
     history.back();
   } else if (a === 'info-next') {
     if (!infoComplete()) return;
-    track('info_complete');
+    track('info_complete', { suspect: state.info.suspect });
+    if (needsConcern()) go('concern');
+    else go('capture', 'front');
+  } else if (a === 'concern-next') {
+    if (!concernComplete()) return;
+    track('concern_complete', { areas: state.concern.areas.length });
     go('capture', 'front');
   } else if (a === 'share') {
-    track('share_click', { stage: state.result.service, variant: state.variant });
-    shareLink(state.result.service);
+    track('share_click', { stage: state.result.level, variant: state.variant });
+    shareLink(state.result.level);
   } else if (a === 'save') {
-    track('save_click', { stage: state.result.service });
-    saveCard(state.result.service);
+    track('save_click', { stage: state.result.level });
+    saveCard(state.result.level);
   } else if (a === 'retry') {
-    track('retry_click', { stage: state.result.service });
+    track('retry_click', { stage: state.result.level });
     Object.assign(state, { front: null, frontCanvas: null, crown: null, crownCanvas: null, result: null });
     go('capture', 'front');
   } else if (a === 'close-sheet') {
@@ -337,6 +624,7 @@ document.addEventListener('click', (e) => {
 });
 
 // ───────────────────────── 시작 ─────────────────────────
+hydrateIcons();
 initLanding();
 initInfo();
 initCapture();

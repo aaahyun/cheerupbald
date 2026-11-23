@@ -43,7 +43,7 @@ export async function shareLink(stage, root) {
   const st = STAGES[stage];
   if (navigator.share && isMobile()) {
     try {
-      await navigator.share({ title: SERVICE_NAME, text: `나는 ${stage}단계 「${st.name}」 — ${st.tone}`, url });
+      await navigator.share({ title: SERVICE_NAME, text: `나는 레벨 ${stage} 「${st.name}」 — ${st.tone}`, url });
       track('share_done', { stage, channel: 'webshare' });
       return;
     } catch (e) {
@@ -58,7 +58,7 @@ export async function shareLink(stage, root) {
 /** 1080×1920 결과 카드 저장 (본인 사진·진행 가능성 미포함). */
 export async function saveCard(stage, root) {
   const label = new URL(root || document.baseURI).host || '';
-  const canvas = await drawStoryCard(stage, label);
+  const canvas = await drawStoryCard(stage, label, root || document.baseURI);
   const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
   const file = new File([blob], `tal-mo-test-${stage}.png`, { type: 'image/png' });
 

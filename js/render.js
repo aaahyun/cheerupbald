@@ -1,6 +1,7 @@
 // 오버레이·단계 일러스트·결과 카드. 일러스트는 자체 제작한 단순 SVG (정식 일러스트가 나오면 교체).
 import { STAGES, SERVICE_NAME } from './content.js';
 import { REPRESENTATIVE } from './judge.js';
+import { CELL } from './vision.js';
 
 // ───────────────────────── 단계 일러스트 ─────────────────────────
 const HAIRLINE = { // 단계별 헤어라인: 중앙 높이 yc, 관자놀이 높이 yt (작을수록 위)
@@ -9,6 +10,35 @@ const HAIRLINE = { // 단계별 헤어라인: 중앙 높이 yc, 관자놀이 높
   3: { yc: 76, yt: 54 },
   4: { yc: 62, yt: 47 },
 };
+
+// 단계 일러스트 이미지 (달걀 캐릭터, image/ 원본을 잘라 assets/stages/ 에 둠).
+// 아직 그림이 없는 레벨은 아래 stageSVG 로 대신 그린다.
+export const STAGE_IMAGES = {
+  1: 'assets/stages/stage-1.webp',
+  2: 'assets/stages/stage-2.webp',
+  3: 'assets/stages/stage-3.webp',
+  4: 'assets/stages/stage-4.webp',
+  5: 'assets/stages/stage-5.webp',
+};
+
+// 달걀 사진 가장자리를 스튜디오 배경에 녹이는 마스크 (원형 크롭 대신)
+export const EGG_MASK = 'radial-gradient(50% 50% at 50% 50%, #000 78%, transparent 100%)';
+
+/** 단계 일러스트 HTML. base: 페이지에서 앱 루트까지의 상대 경로 (예: '../../'). */
+export function stageArt(stage, { size = 200, base = '', cls = '' } = {}) {
+  const src = STAGE_IMAGES[stage];
+  if (!src) return stageSVG(stage, { size });
+  return `<img class="stage-img ${cls}" src="${base}${src}" width="${size}" height="${size}" alt="" decoding="async" style="-webkit-mask-image:${EGG_MASK};mask-image:${EGG_MASK}">`;
+}
+
+/** 5단계 달걀 라인업. me: 내 레벨(없으면 강조 없음). */
+export function eggLineup(me = 0, { base = '', names = true } = {}) {
+  return `<ol class="lineup">${[1, 2, 3, 4, 5].map((s) => `
+    <li class="egg-slot${s === me ? ' is-me' : ''}" data-stage="${s}">
+      <span class="egg-pic">${stageArt(s, { size: 120, base })}</span>
+      ${names ? `<span class="egg-name"><b>${String(s).padStart(2, '0')}</b>${STAGES[s].name}</span>` : ''}
+    </li>`).join('')}</ol>`;
+}
 
 /** 단계별 얼굴 일러스트 SVG 문자열 (viewBox 200×200). */
 export function stageSVG(stage, { size = 200 } = {}) {
@@ -47,18 +77,19 @@ export function stageSVG(stage, { size = 200 } = {}) {
 }
 
 // ───────────────────────── 정면 오버레이 ─────────────────────────
-function hairlinePoints(geom, F, M) {
+// H = 가운데 헤어라인 높이, M = 관자놀이가 가운데보다 더 올라간 정도 (음수면 가운데가 더 높은 반원형)
+function hairlinePoints(geom, H, M) {
   const { browC, right, up, U, eyeL, eyeR, faceL, faceR } = geom;
   const lat = (p) => ((p.x - browC.x) * right.x + (p.y - browC.y) * right.y) / U;
   const sL = lat(eyeL), sR = lat(eyeR), eL = lat(faceL), eR = lat(faceR);
   const pts = [
-    [eL * 0.98, (F + M) * 0.45],
-    [sL, F + M],
-    [sL * 0.45, F + M * 0.25],
-    [0, F],
-    [sR * 0.45, F + M * 0.25],
-    [sR, F + M],
-    [eR * 0.98, (F + M) * 0.45],
+    [eL * 0.98, (H + M) * 0.45],
+    [sL, H + M],
+    [sL * 0.45, H + M * 0.25],
+    [0, H],
+    [sR * 0.45, H + M * 0.25],
+    [sR, H + M],
+    [eR * 0.98, (H + M) * 0.45],
   ];
   return pts.map(([s, h]) => ({
     x: browC.x + right.x * s * U + up.x * h * U,
@@ -94,49 +125,54 @@ function tag(ctx, text, x, y, color, scale) {
 }
 
 /**
- * 정면 오버레이. variant 'A' = 내 단계 선 1개, 'B' = 5단계 선 전부 + "나는 여기".
- * female이면 측정된 내 헤어라인을 그린다 (루드비히는 앞머리 후퇴 기준이 아님).
+ * 정면 오버레이. 기본형이 M·C형이면 유형·등급별 대표 헤어라인을 그린다.
+ *  variant 'A' = 내 등급 선 1개, 'B' = 등급 0~3 선 전부 + "나는 여기".
+ * L·U형이거나 대표값이 없으면 측정된 내 헤어라인을 그린다.
  */
-export function drawFrontOverlay(photo, front, stage, variant, female) {
+export function drawFrontOverlay(photo, front, judged, variant) {
   const { geom } = front;
   const c = document.createElement('canvas');
   c.width = photo.width; c.height = photo.height;
   const ctx = c.getContext('2d');
   ctx.drawImage(photo, 0, 0);
+  if (front.hairlineMissing) return c;
   const scale = Math.max(photo.width, photo.height) / 1024 * 1.4;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  const drawStage = (s, F, M, width, alpha, label) => {
-    const pts = hairlinePoints(geom, F, M);
+  const drawLine = (level, H, M, width, alpha, label) => {
+    const pts = hairlinePoints(geom, H, M);
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = 'rgba(0,0,0,.35)';
     ctx.lineWidth = width + 4 * scale;
     smoothLine(ctx, pts);
-    ctx.strokeStyle = STAGES[s].color;
+    ctx.strokeStyle = STAGES[level].color;
     ctx.lineWidth = width;
     smoothLine(ctx, pts);
     ctx.globalAlpha = 1;
-    if (label) tag(ctx, label, pts[3].x, pts[3].y - 30 * scale, STAGES[s].color, scale);
+    if (label) tag(ctx, label, pts[3].x, pts[3].y - 30 * scale, STAGES[level].color, scale);
   };
 
-  if (female) {
-    if (front.F != null) drawStage(stage, front.F, front.M ?? 0, 5 * scale, 1, '내 헤어라인');
+  const { type, grade } = judged.basic;
+  const reps = REPRESENTATIVE[type];
+  if (type !== 'M' && type !== 'C') {
+    drawLine(judged.basic.level, front.H, front.M ?? 0, 5 * scale, 1, '내 헤어라인');
   } else if (variant === 'B') {
-    for (let s = 1; s <= 5; s++) {
-      if (s !== stage) drawStage(s, REPRESENTATIVE[s].F, REPRESENTATIVE[s].M, 2.5 * scale, 0.75, null);
-    }
-    drawStage(stage, REPRESENTATIVE[stage].F, REPRESENTATIVE[stage].M, 6 * scale, 1, `나는 여기 · ${stage}단계`);
+    for (let g = 0; g <= 3; g++) if (g !== grade) drawLine(g + 1, reps[g].H, reps[g].M, 2.5 * scale, 0.75, null);
+    drawLine(grade + 1, reps[grade].H, reps[grade].M, 6 * scale, 1, `나는 여기 · 레벨 ${grade + 1}`);
   } else {
-    drawStage(stage, REPRESENTATIVE[stage].F, REPRESENTATIVE[stage].M, 6 * scale, 1, `${stage}단계 헤어라인`);
+    drawLine(grade + 1, reps[grade].H, reps[grade].M, 6 * scale, 1, `레벨 ${grade + 1} 헤어라인`);
   }
   return c;
 }
 
 // ───────────────────────── 정수리 오버레이 ─────────────────────────
-export function drawCrownOverlay(photo, crown, stage) {
-  const { data, G, cx, cy, r } = crown.grid;
+/** 두피 노출 영역을 반투명으로 칠하고, 유형별로 가마 원(V)·윗머리 띠(F)·현재 헤어라인(M/C/U)을 표시한다. */
+export function drawCrownOverlay(photo, crown, judged) {
+  const { data, G, cx, cy, r, vx, vy, Rv, x0, x1, hairRow } = crown.grid;
   const size = Math.round(2 * r);
+  const cell = size / G;
+  const color = STAGES[judged.level].color;
   const c = document.createElement('canvas');
   c.width = size; c.height = size;
   const ctx = c.getContext('2d');
@@ -145,25 +181,73 @@ export function drawCrownOverlay(photo, crown, stage) {
   ctx.arc(size / 2, size / 2, r, 0, Math.PI * 2);
   ctx.clip();
   ctx.drawImage(photo, cx - r, cy - r, size, size, 0, 0, size, size);
-  const cell = size / G;
-  ctx.fillStyle = STAGES[stage].color;
-  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = color;
   for (let y = 0; y < G; y++) {
     for (let x = 0; x < G; x++) {
-      if (data[y * G + x] === 3) ctx.fillRect(x * cell, y * cell, cell + 0.5, cell + 0.5);
+      const v = data[y * G + x];
+      if (v !== CELL.scalp && v !== CELL.recession) continue;
+      ctx.globalAlpha = v === CELL.recession ? 0.35 : 0.55;
+      ctx.fillRect(x * cell, y * cell, cell + 0.5, cell + 0.5);
     }
   }
+  ctx.globalAlpha = 1;
   ctx.restore();
+
+  const lw = Math.max(3, size / 120);
+  const P = (gx, gy) => [(gx + 0.5) * cell, (gy + 0.5) * cell];
+  const marks = new Set([judged.rep, ...judged.extra]);
+  ctx.lineCap = 'round';
+
+  if (judged.basic.type !== 'L') {
+    // 현재 헤어라인
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = lw * 1.4;
+    ctx.beginPath();
+    let started = false;
+    for (let x = x0; x <= x1; x++) {
+      if (hairRow[x] < 0) continue;
+      const [px, py] = P(x, Math.min(G - 1, hairRow[x]));
+      if (started) ctx.lineTo(px, py); else { ctx.moveTo(px, py); started = true; }
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([size / 40, size / 70]);
+  ctx.lineWidth = lw;
   ctx.strokeStyle = '#fff';
-  ctx.lineWidth = Math.max(3, size / 120);
+  if (marks.has('V')) {
+    const [px, py] = P(vx, vy);
+    ctx.beginPath(); ctx.arc(px, py, Rv * cell, 0, Math.PI * 2); ctx.stroke();
+  }
+  if (marks.has('F')) {
+    const top = Math.min(...[...hairRow].filter((v, x) => x >= x0 && x <= x1 && v >= 0));
+    const [ax, ay] = P(x0, top), [bx, by] = P(x1, vy);
+    ctx.strokeRect(ax, ay, bx - ax, by - ay);
+  }
+  ctx.setLineDash([]);
+  // 가마 위치
+  const [gx, gy] = P(vx, vy);
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(gx, gy, lw * 1.6, 0, Math.PI * 2); ctx.fill();
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = lw;
   ctx.setLineDash([size / 40, size / 60]);
   ctx.beginPath();
-  ctx.arc(size / 2, size / 2, r - ctx.lineWidth, 0, Math.PI * 2);
+  ctx.arc(size / 2, size / 2, r - lw, 0, Math.PI * 2);
   ctx.stroke();
   return c;
 }
 
 // ───────────────────────── 스토리 카드 1080×1920 ─────────────────────────
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
 function svgToImage(svg) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -185,8 +269,33 @@ function wrapText(ctx, text, maxW) {
   return lines;
 }
 
-/** 공유용 결과 카드. 본인 사진·진행 가능성은 넣지 않는다. */
-export async function drawStoryCard(stage, siteLabel) {
+/** 달걀 사진을 가장자리가 녹아드는 캔버스로 (EGG_MASK 와 같은 모양) */
+function featheredEgg(img, size, { mute = false } = {}) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, size, size);
+  if (mute) {
+    // 흑백 + 옅게 (ctx.filter 미지원 브라우저도 같은 결과가 나도록 직접 계산)
+    const d = ctx.getImageData(0, 0, size, size);
+    const p = d.data;
+    for (let i = 0; i < p.length; i += 4) {
+      const y = p[i] * 0.3 + p[i + 1] * 0.59 + p[i + 2] * 0.11;
+      p[i] = p[i + 1] = p[i + 2] = y;
+    }
+    ctx.putImageData(d, 0, 0);
+  }
+  ctx.globalCompositeOperation = 'destination-in';
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0.78, '#000');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  return c;
+}
+
+/** 공유용 결과 카드 ('표본 포스터'). 본인 사진·진행 가능성은 넣지 않는다. */
+export async function drawStoryCard(stage, siteLabel, root = document.baseURI) {
   try { await document.fonts.ready; } catch { /* 폰트 없이 진행 */ }
   const st = STAGES[stage];
   const W = 1080, H = 1920;
@@ -194,48 +303,86 @@ export async function drawStoryCard(stage, siteLabel) {
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
   const font = (w, s) => `${w} ${s}px Pretendard, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif`;
+  const INK = '#141414', INK2 = '#4A4A4C', INK3 = '#6B6B6E';
 
-  ctx.fillStyle = '#FFF8EE';
+  // 스튜디오 배경지: 위는 밝고 아래로 갈수록 어두워진다
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#EEEEEF');
+  bg.addColorStop(0.55, '#DCDCDE');
+  bg.addColorStop(1, '#CDCDD0');
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = st.color;
-  ctx.globalAlpha = 0.14;
-  ctx.beginPath(); ctx.arc(W / 2, 820, 430, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
+  // 레벨 색 틴트 (결과에서만 쓰는 유일한 색)
+  const tint = ctx.createRadialGradient(W / 2, 640, 0, W / 2, 640, 640);
+  tint.addColorStop(0, st.color + '33');
+  tint.addColorStop(1, st.color + '00');
+  ctx.fillStyle = tint;
+  ctx.fillRect(0, 0, W, H);
 
-  ctx.textAlign = 'center';
+  // 상단 라벨
   ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#5B4B3F';
-  ctx.font = font(700, 54);
-  ctx.fillText(SERVICE_NAME, W / 2, 230);
+  ctx.fillStyle = INK;
+  ctx.fillRect(80, 120, W - 160, 3);
+  ctx.font = font(700, 30);
+  ctx.textAlign = 'left';
+  ctx.fillText('SPECIMEN REPORT', 80, 176);
+  ctx.textAlign = 'right';
+  ctx.fillText(`LV.${String(stage).padStart(2, '0')} / 05`, W - 80, 176);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = INK2;
+  ctx.font = font(700, 40);
+  ctx.fillText(SERVICE_NAME, W / 2, 262);
 
-  const img = await svgToImage(stageSVG(stage, { size: 640 }));
-  ctx.drawImage(img, W / 2 - 320, 500, 640, 640);
+  // 대형 달걀
+  let egg;
+  if (STAGE_IMAGES[stage]) egg = await loadImage(new URL(STAGE_IMAGES[stage], root).href);
+  else egg = await svgToImage(stageSVG(stage, { size: 720 }));
+  const ES = 760;
+  ctx.drawImage(featheredEgg(egg, ES), W / 2 - ES / 2, 300);
 
-  // 단계 배지
+  // 레벨 칩
+  ctx.font = font(800, 40);
+  const chip = `레벨 ${stage} / 5`;
+  const cw = ctx.measureText(chip).width + 104;
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.beginPath(); ctx.roundRect(W / 2 - cw / 2, 1080, cw, 76, 38); ctx.fill();
   ctx.fillStyle = st.color;
-  ctx.beginPath(); ctx.roundRect(W / 2 - 150, 330, 300, 100, 50); ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = font(800, 56);
-  ctx.fillText(`${stage}단계`, W / 2, 400);
+  ctx.beginPath(); ctx.arc(W / 2 - cw / 2 + 42, 1118, 12, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = INK;
+  ctx.fillText(chip, W / 2 + 16, 1132);
 
-  ctx.fillStyle = '#2B211B';
-  ctx.font = font(900, 150);
+  ctx.font = font(900, 168);
   ctx.fillText(st.name, W / 2, 1340);
-  ctx.fillStyle = '#5B4B3F';
-  ctx.font = font(600, 60);
-  wrapText(ctx, st.tone, W - 160).forEach((l, i) => ctx.fillText(l, W / 2, 1450 + i * 76));
+  ctx.fillStyle = INK2;
+  ctx.font = font(600, 52);
+  wrapText(ctx, st.tone, W - 200).forEach((l, i) => ctx.fillText(l, W / 2, 1430 + i * 68));
 
-  // 5단계 눈금
-  const barY = 1620, barW = 640, gap = 16, seg = (barW - gap * 4) / 5;
-  for (let s = 1; s <= 5; s++) {
-    ctx.fillStyle = s <= stage ? STAGES[stage].color : '#E9DCCB';
-    ctx.beginPath(); ctx.roundRect(W / 2 - barW / 2 + (s - 1) * (seg + gap), barY, seg, 22, 11); ctx.fill();
-  }
+  // 5단계 라인업
+  const imgs = await Promise.all([1, 2, 3, 4, 5].map((s) => (STAGE_IMAGES[s]
+    ? loadImage(new URL(STAGE_IMAGES[s], root).href) : svgToImage(stageSVG(s, { size: 200 })))));
+  const LS = 168, gap = 8, total = LS * 5 + gap * 4, x0 = (W - total) / 2, y0 = 1540;
+  imgs.forEach((im, i) => {
+    const me = i + 1 === stage;
+    ctx.globalAlpha = me ? 1 : 0.5;
+    ctx.drawImage(featheredEgg(im, LS, { mute: !me }), x0 + i * (LS + gap), y0);
+    ctx.globalAlpha = 1;
+    if (me) {
+      ctx.fillStyle = st.color;
+      ctx.beginPath(); ctx.roundRect(x0 + i * (LS + gap) + 44, y0 + LS + 4, LS - 88, 8, 4); ctx.fill();
+    }
+  });
 
-  ctx.fillStyle = '#8C7B6D';
-  ctx.font = font(500, 36);
-  ctx.fillText('나도 테스트하기 → ' + siteLabel, W / 2, 1780);
-  ctx.font = font(400, 28);
-  ctx.fillText('재미로 보는 참고용 테스트예요', W / 2, 1836);
+  ctx.fillStyle = INK;
+  ctx.fillRect(80, 1770, W - 160, 2);
+  ctx.font = font(700, 34);
+  ctx.textAlign = 'left';
+  ctx.fillText('나도 테스트하기 →', 80, 1830);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = INK3;
+  ctx.font = font(500, 30);
+  ctx.fillText(siteLabel, W - 80, 1830);
+  ctx.textAlign = 'center';
+  ctx.font = font(500, 26);
+  ctx.fillText('재미로 보는 참고용 테스트예요', W / 2, 1880);
   return c;
 }

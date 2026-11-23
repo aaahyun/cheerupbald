@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>당신은 탈모입니까? · 1분 탈모 자가 체크</title>
-  <meta name="description" content="사진 2장, 1분이면 끝. 노우드-해밀턴 기준으로 보는 재미용 탈모 자가 체크. 사진은 서버로 전송되지 않아요.">
-  <meta name="theme-color" content="#FFF8EE">
+  <meta name="description" content="사진 2장, 1분이면 끝. 탈모 레벨과 유형(M자형·정수리형 등)을 보여주는 재미용 탈모 자가 체크. 사진은 서버로 전송되지 않아요.">
+  <meta name="theme-color" content="#EEEEEF">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://aaahyun.github.io/cheerupbald/">
   <meta property="og:title" content="당신은 탈모입니까?">
@@ -14,6 +14,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="preload" as="image" href="assets/stages/stage-1.webp">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.min.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -23,22 +24,36 @@
   <!-- 1. 랜딩 -->
   <section class="screen" data-screen="landing" hidden>
     <div class="landing">
-      <div class="landing-art" id="landingArt" aria-hidden="true"></div>
-      <h1 class="headline">당신은<br>탈모입니까?</h1>
-      <p class="sub">사진 2장, 1분이면 끝</p>
-      <button class="btn primary big" data-action="start">테스트하러 가기</button>
+      <p class="eyebrow rule"><span>Hair Self-Check</span><span>No.01 — 1 min</span></p>
+      <h1 class="display">당신은<br>탈모입니까?</h1>
+      <p class="lede">사진 2장, 1분이면 끝</p>
+      <button class="hero-egg" id="heroEgg" type="button" aria-label="달걀 흔들기"></button>
+      <p class="hero-caption" id="heroCaption" aria-hidden="true"></p>
+      <div id="landingLineup" class="lineup-wrap" aria-hidden="true"></div>
+      <button class="btn primary big" data-action="start">테스트하러 가기 <span data-icon="arrow"></span></button>
       <ul class="assure">
-        <li><span class="ico">🔒</span>사진은 서버로 전송되지 않아요</li>
-        <li><span class="ico">🩺</span>의료 진단이 아닌 참고용 테스트예요</li>
+        <li><span data-icon="lock" data-size="16"></span>사진은 서버로 전송되지 않아요</li>
+        <li><span data-icon="steth" data-size="16"></span>의료 진단이 아닌 참고용 테스트예요</li>
       </ul>
     </div>
     <footer class="disclaimer" data-disclaimer></footer>
   </section>
 
+  <!-- 2-0. 의심 여부 (질문 하나만, 고르면 바로 다음) -->
+  <section class="screen form" data-screen="suspect" hidden>
+    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로"><span data-icon="back"></span></button><div class="eggbar" aria-hidden="true"></div><span class="progress"></span></header>
+    <h2 class="title">혹시 탈모를<br>의심 중인가요?</h2>
+    <p class="sub-note">답에 따라 결과를 더 알맞게 보여드릴게요</p>
+    <div class="choices col big" data-field="suspect">
+      <button data-value="yes">네, 의심돼요<small>신경 쓰이는 부위를 더 자세히 볼게요</small></button>
+      <button data-value="no">아니요, 궁금해서요<small>바로 기본 정보로 넘어가요</small></button>
+    </div>
+  </section>
+
   <!-- 2. 기본 정보 -->
-  <section class="screen" data-screen="info" hidden>
-    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로">←</button><span class="progress">기본 정보</span></header>
-    <h2 class="title">먼저 몇 가지만 알려주세요</h2>
+  <section class="screen form" data-screen="info" hidden>
+    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로"><span data-icon="back"></span></button><div class="eggbar" aria-hidden="true"></div><span class="progress"></span></header>
+    <h2 class="title">몇 가지만<br>알려주세요</h2>
     <div class="field">
       <p class="label">성별</p>
       <div class="choices" data-field="gender">
@@ -59,23 +74,67 @@
       </div>
     </div>
     <div class="bottom">
-      <button class="btn primary big" data-action="info-next" disabled>다음</button>
+      <button class="btn primary big" data-action="info-next" disabled>다음 <span data-icon="arrow"></span></button>
+    </div>
+  </section>
+
+  <!-- 2-1. 고민 체크 (의심 중일 때만) -->
+  <section class="screen form" data-screen="concern" hidden>
+    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로"><span data-icon="back"></span></button><div class="eggbar" aria-hidden="true"></div><span class="progress"></span></header>
+    <h2 class="title">어디가<br>신경 쓰이세요?</h2>
+    <p class="sub-note">알려주신 부위는 사진에서 더 자세히 볼게요</p>
+    <div class="field">
+      <p class="label">주요 고민 부위 <span class="hint">여러 개 골라도 돼요</span></p>
+      <div class="choices wrap" data-field="areas" data-multi>
+        <button data-value="m">M자 헤어라인</button><button data-value="crown">정수리</button><button data-value="part">중앙 가르마</button>
+        <button data-value="temple">측두부(옆머리)</button><button data-value="diffuse">전체적인 숱 감소</button>
+      </div>
+    </div>
+    <div class="field">
+      <p class="label">두피 타입</p>
+      <div class="choices wrap" data-field="scalp">
+        <button data-value="oily">지성</button><button data-value="dry">건성</button><button data-value="sensitive">민감성</button>
+        <button data-value="unknown">잘 모르겠어요</button>
+      </div>
+    </div>
+    <div class="field">
+      <p class="label">요즘 느끼는 증상 <span class="hint">여러 개 골라도 돼요</span></p>
+      <div class="choices wrap" data-field="symptoms" data-multi>
+        <button data-value="itch">가려움</button><button data-value="flake">각질</button><button data-value="red">붉은기</button>
+        <button data-value="bump">뾰루지</button><button data-value="heat">열감</button><button data-value="none" data-exclusive>없음</button>
+      </div>
+    </div>
+    <div class="field">
+      <p class="label">하루에 빠지는 양, 어떤 느낌이에요?</p>
+      <div class="choices col" data-field="shedding">
+        <button data-value="normal">평소 수준<small>감을 때 조금 · 하루 50개 미만</small></button>
+        <button data-value="more">좀 늘었어요<small>하루 50~100개쯤</small></button>
+        <button data-value="lots">확 늘었어요<small>베개·배수구에 눈에 띄게 · 100개 이상</small></button>
+        <button data-value="unknown">잘 모르겠어요</button>
+      </div>
+    </div>
+    <div class="bottom">
+      <button class="btn primary big" data-action="concern-next" disabled>다음 <span data-icon="arrow"></span></button>
     </div>
   </section>
 
   <!-- 3. 촬영 (정면 / 정수리 공용) -->
   <section class="screen" data-screen="capture" hidden>
-    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로">←</button><span class="progress" id="capStep"></span></header>
+    <header class="topbar"><button class="back" data-action="back" aria-label="뒤로"><span data-icon="back"></span></button><div class="eggbar" aria-hidden="true"></div><span class="progress"></span></header>
     <h2 class="title" id="capTitle"></h2>
-    <div class="guide" id="capGuide"></div>
-    <ul class="tips" id="capTips"></ul>
-    <p class="privacy"><span class="ico">🔒</span><span data-privacy></span></p>
-    <div class="cap-status" id="capStatus" hidden></div>
+    <div class="viewfinder" id="capFrame">
+      <div class="guide" id="capGuide"></div>
+      <i class="vf-c tl"></i><i class="vf-c tr"></i><i class="vf-c bl"></i><i class="vf-c br"></i>
+      <p class="vf-hud"><span class="rec" id="capHud"></span><span>1 : 1</span></p>
+    </div>
+    <div class="cap-status" id="capStatus" role="status" hidden></div>
+    <ol class="tips" id="capTips"></ol>
+    <p class="privacy"><span data-icon="lock" data-size="16"></span><span data-privacy></span></p>
     <div class="bottom col">
-      <button class="btn primary big" id="capNext" hidden>다음</button>
+      <button class="btn primary big" id="capNext" hidden></button>
       <div class="row">
-        <label class="btn" id="capShootLabel"><input type="file" accept="image/*" id="capShoot" hidden>촬영하기</label>
-        <label class="btn"><input type="file" accept="image/*" id="capAlbum" hidden>앨범에서 선택</label>
+        <label class="btn" id="capShootLabel"><input type="file" accept="image/*" id="capShoot" hidden><span data-icon="camera"></span><span class="lbl">촬영하기</span></label>
+        <label class="btn"><input type="file" accept="image/*" id="capAlbum" hidden><span data-icon="image"></span><span class="lbl">앨범에서 선택</span></label>
       </div>
     </div>
   </section>
@@ -83,9 +142,15 @@
   <!-- 4. 검사 중 -->
   <section class="screen" data-screen="analyzing" hidden>
     <div class="analyzing">
-      <div class="scanner" aria-hidden="true"><div id="scanArt"></div><div class="beam"></div></div>
+      <p class="eyebrow rule"><span>Analyzing</span><span id="labClock">00.0s</span></p>
+      <div class="lab" id="lab" aria-hidden="true">
+        <div class="plate" data-plate="front"></div>
+        <div class="plate round" data-plate="crown"></div>
+        <div class="beam"></div>
+      </div>
       <p class="step-text" id="analyzeText" aria-live="polite"></p>
-      <div class="dots"><i></i><i></i><i></i><i></i></div>
+      <ol class="lab-steps" id="labSteps"></ol>
+      <p class="lab-note"><span data-icon="lock" data-size="14"></span>분석은 이 기기 안에서만 진행돼요</p>
     </div>
   </section>
 
