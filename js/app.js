@@ -562,11 +562,14 @@ function renderResult() {
     track('result_view', { stage: s, type: judged.rep, variant: state.variant, match: state.result.expect.match });
   }
   // 내 기록이 반영된 뒤 읽는다. 실패하면 문구를 아예 띄우지 않는다.
-  counted.then(() => levelShare(s)).then((share) => {
+  const { gender, age } = state.info;
+  counted.then(() => levelShare(s, gender, age)).then((share) => {
     const el = $('#peerStat', root);
-    if (!share || !el || !root.isConnected) return;
+    // 나 혼자뿐인 그룹이면 "100%"가 되어 의미가 없으니 띄우지 않는다
+    if (!share || share.total < 3 || !el || !root.isConnected) return;
     const pct = Math.round((share.same / share.total) * 100);
-    el.innerHTML = `지금까지 테스트한 <b>${share.total.toLocaleString()}명</b> 중 <b>${share.same.toLocaleString()}명(${pct}%)</b>이 나와 같은 레벨 ${s}${[1, 3].includes(s) ? '이에요' : '예요'}`;
+    const group = `${age === '50' ? '50대 이상' : `${age}대`} ${gender === 'm' ? '남성' : '여성'}`;
+    el.innerHTML = `나와 같은 <b>${group}</b>의 <b>${pct}%</b>가 나와 같은 레벨 ${s}${[1, 3].includes(s) ? '이에요' : '예요'}`;
     el.hidden = false;
   });
 }

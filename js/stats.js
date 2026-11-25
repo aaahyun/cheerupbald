@@ -35,11 +35,11 @@ export function countResult({ level, type, gender, age, suspect, match }) {
   } catch { return Promise.resolve(); }
 }
 
-// 레벨별 누적 인원 → { total, same } 또는 실패 시 null
-export async function levelShare(level) {
-  if (!STATS.url || !STATS.anonKey || !LEVELS.has(level)) return null;
+// 같은 성별·나이대 안의 레벨별 누적 인원 → { total, same } 또는 실패 시 null
+export async function levelShare(level, gender, age) {
+  if (!STATS.url || !STATS.anonKey || !LEVELS.has(level) || !GENDERS.has(gender) || !AGES.has(age)) return null;
   try {
-    const res = await rpc('level_counts', {});
+    const res = await rpc('level_counts_for', { p_gender: gender, p_age: age });
     if (!res.ok) return null;
     const rows = await res.json();
     let total = 0, same = 0;

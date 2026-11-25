@@ -88,3 +88,20 @@ $$;
 
 revoke all on function public.level_counts() from public;
 grant execute on function public.level_counts() to anon;
+
+-- ───────── v4: 결과 화면「나와 같은 20대 남성의 N%가 같은 레벨」 ─────────
+-- 지정한 성별·나이대 안의 레벨별 합계만 돌려준다.
+create or replace function public.level_counts_for(p_gender text, p_age text)
+returns table (level smallint, total bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select level, sum(count)::bigint from public.result_counts
+  where gender = p_gender and age = p_age
+  group by level;
+$$;
+
+revoke all on function public.level_counts_for(text, text) from public;
+grant execute on function public.level_counts_for(text, text) to anon;
