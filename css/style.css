@@ -420,6 +420,44 @@ html.vt .screen { animation: none; }
 @keyframes toast { from { opacity: 0; transform: translate(-50%, 12px); } }
 .debug { font-size: 12px; background: #222; color: #9f9; padding: 12px; border-radius: 10px; white-space: pre-wrap; margin-top: 16px; }
 
+/* ── 세로가 짧은 화면 (카카오톡 인앱 브라우저 등: 상·하단 바 때문에 보이는 높이가 줄어든다) ── */
+@media (max-height: 740px) {
+  .screen { padding-top: 6px; }
+  .topbar { height: 44px; }
+  .title { font-size: 25px; margin: 10px 0 18px; }
+  .sub-note { margin: -10px 0 18px; font-size: 14px; }
+  .field { margin-bottom: 22px; }
+  .label { font-size: 16px; margin-bottom: 10px; }
+  .choices button { min-height: 48px; }
+  .choices.big button { min-height: 72px; padding: 12px 20px; }
+  .btn.big { min-height: 54px; }
+  .bottom { padding-top: 22px; padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+
+  /* 랜딩: 첫 화면 안에 버튼까지 보이게 */
+  .landing { padding-top: 4px; }
+  .display { font-size: clamp(36px, min(14.5vw, 8.4dvh), 68px); margin: 14px 0 6px; }
+  .lede { font-size: 15px; }
+  .hero-egg { width: min(56vw, 31dvh, 280px); margin-top: 2px; }
+  .hero-caption { margin-bottom: 2px; }
+  .lineup-wrap { width: min(100%, 250px); margin-bottom: 14px; }
+  .assure { margin-top: 12px; font-size: 12px; }
+
+  /* 촬영: 뷰파인더를 높이에 맞춰 줄인다 */
+  .viewfinder { width: min(100%, 46dvh); margin-inline: auto; }
+  .tips { margin-top: 14px; gap: 6px; }
+  .tips li { font-size: 14px; }
+  .privacy { margin-top: 12px; }
+
+  /* 검사 중 */
+  .lab { width: min(100%, 56dvh); margin: 16px auto 0; }
+  .step-text { font-size: 21px; margin: 16px 0 10px; }
+
+  /* 결과: 레벨 이름까지 첫 화면에 */
+  .big-egg { width: min(64vw, 32dvh, 250px); margin-top: 8px; }
+  .level-chip { margin-top: 18px; }
+  .stage-name { font-size: clamp(44px, min(17vw, 10dvh), 76px); margin: 6px 0 10px; }
+}
+
 /* ── 모션 줄이기 ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; transition-delay: 0s !important; }
