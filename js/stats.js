@@ -11,22 +11,43 @@ const AGES = new Set(['10', '20', '30', '40', '50']);
 const SUSPECTS = new Set(['y', 'n']);
 const MATCHES = new Set(['confirmed', 'early', 'relief', 'elsewhere', 'fine', 'surprise']);
 
+const rpc = (name, body) => fetch(`${STATS.url.replace(/\/$/, '')}/rest/v1/rpc/${name}`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    apikey: STATS.anonKey,
+    Authorization: `Bearer ${STATS.anonKey}`,
+  },
+  body: JSON.stringify(body),
+  credentials: 'omit',
+  keepalive: true,
+  referrerPolicy: 'no-referrer',
+});
+
+// 카운터 +1. 끝나면(성공·실패 무관) resolve 되는 Promise 를 돌려준다 — 내 기록이 들어간 뒤 통계를 읽기 위해.
 export function countResult({ level, type, gender, age, suspect, match }) {
-  if (!STATS.url || !STATS.anonKey) return;
+  if (!STATS.url || !STATS.anonKey) return Promise.resolve();
   if (!LEVELS.has(level) || !TYPES.has(type) || !GENDERS.has(gender) || !AGES.has(age)
-    || !SUSPECTS.has(suspect) || !MATCHES.has(match)) return;
+    || !SUSPECTS.has(suspect) || !MATCHES.has(match)) return Promise.resolve();
   try {
-    fetch(`${STATS.url.replace(/\/$/, '')}/rest/v1/rpc/increment_result_v2`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: STATS.anonKey,
-        Authorization: `Bearer ${STATS.anonKey}`,
-      },
-      body: JSON.stringify({ p_level: level, p_type: type, p_gender: gender, p_age: age, p_suspect: suspect, p_match: match }),
-      credentials: 'omit',
-      keepalive: true,
-      referrerPolicy: 'no-referrer',
-    }).catch(() => { /* 집계 실패가 서비스를 막지 않게 */ });
-  } catch { /* 위와 같음 */ }
+    return rpc('increment_result_v2', { p_level: level, p_type: type, p_gender: gender, p_age: age, p_suspect: suspect, p_match: match })
+      .then(() => {}, () => { /* 집계 실패가 서비스를 막지 않게 */ });
+  } catch { return Promise.resolve(); }
+}
+
+// 레벨별 누적 인원 → { total, same } 또는 실패 시 null
+export async function levelShare(level) {
+  if (!STATS.url || !STATS.anonKey || !LEVELS.has(level)) return null;
+  try {
+    const res = await rpc('level_counts', {});
+    if (!res.ok) return null;
+    const rows = await res.json();
+    let total = 0, same = 0;
+    for (const r of rows) {
+      const n = Number(r.total) || 0;
+      total += n;
+      if (Number(r.level) === level) same = n;
+    }
+    return total > 0 ? { total, same } : null;
+  } catch { return null; }
 }

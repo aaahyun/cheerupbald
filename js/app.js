@@ -10,7 +10,7 @@ import { icon, hydrateIcons } from './icons.js';
 import { GUIDES } from './guides.js';
 import { shareLink, saveCard } from './share.js';
 import { track } from './track.js';
-import { countResult } from './stats.js';
+import { countResult, levelShare } from './stats.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -117,7 +117,7 @@ function initLanding() {
     s = (s % 5) + 1;
   };
   tick();
-  if (!reduceMotion()) setInterval(() => { if (current.screen === 'landing') tick(); }, 2200);
+  if (!reduceMotion()) setInterval(() => { if (current.screen === 'landing') tick(); }, 1600);
   hero.addEventListener('click', () => {
     hero.classList.remove('wobble');
     void hero.offsetWidth; // 애니메이션 재시작
@@ -522,6 +522,7 @@ function renderResult() {
         <ul class="type-chips">${typeChips.map((t) => `<li>${t}</li>`).join('')}</ul>
         <p class="tone">${st.tone}</p>
         ${norwood ? `<p class="scale-ref">노우드-해밀턴 기준으로는 대략 ${norwood}형에 가까워요 (참고)</p>` : ''}
+        <p class="peer-stat" id="peerStat" hidden></p>
       </div>
     </header>
     ${expectBanner(st)}
@@ -550,15 +551,24 @@ function renderResult() {
   const root = $('#resultBody .result');
   revealResult(root, s);
   observeIn(root);
+  let counted = Promise.resolve();
   if (!state.result.counted) {
     // 결과 화면 진입 시 1회 (뒤로·앞으로 가기로 다시 그려도 다시 세지 않는다)
     state.result.counted = true;
-    countResult({
+    counted = countResult({
       level: s, type: judged.rep, gender: state.info.gender, age: state.info.age,
       suspect: needsConcern() ? 'y' : 'n', match: state.result.expect.match,
     });
     track('result_view', { stage: s, type: judged.rep, variant: state.variant, match: state.result.expect.match });
   }
+  // 내 기록이 반영된 뒤 읽는다. 실패하면 문구를 아예 띄우지 않는다.
+  counted.then(() => levelShare(s)).then((share) => {
+    const el = $('#peerStat', root);
+    if (!share || !el || !root.isConnected) return;
+    const pct = Math.round((share.same / share.total) * 100);
+    el.innerHTML = `지금까지 테스트한 <b>${share.total.toLocaleString()}명</b> 중 <b>${share.same.toLocaleString()}명(${pct}%)</b>이 나와 같은 레벨 ${s}${[1, 3].includes(s) ? '이에요' : '예요'}`;
+    el.hidden = false;
+  });
 }
 
 function debugText() {

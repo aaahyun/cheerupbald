@@ -15,29 +15,90 @@ const SITE_URL = (process.env.SITE_URL || 'https://YOUR_GITHUB_ID.github.io/chee
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const FONT = `<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.min.css">`;
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+// 검색엔진 소유 확인 토큰(선택). Search Console·네이버 서치어드바이저에서 받은 content 값.
+const GOOGLE_VERIFY = process.env.GOOGLE_VERIFY || '';
+const NAVER_VERIFY = process.env.NAVER_VERIFY || '';
+
+// ── 공통 SEO <head> 블록 ──
+// base: 페이지에서 사이트 루트까지의 상대경로 (아이콘용)
+function seoHead({ title, description, ogTitle = title, ogDescription = description, path, image, imageAlt, index = true, base, jsonLd }) {
+  const url = `${SITE_URL}${path}`;
+  const lines = [
+    `<title>${esc(title)}</title>`,
+    `<meta name="description" content="${esc(description)}">`,
+    `<meta name="robots" content="${index ? 'index,follow,max-image-preview:large' : 'noindex,follow'}">`,
+    `<link rel="canonical" href="${url}">`,
+    GOOGLE_VERIFY && `<meta name="google-site-verification" content="${esc(GOOGLE_VERIFY)}">`,
+    NAVER_VERIFY && `<meta name="naver-site-verification" content="${esc(NAVER_VERIFY)}">`,
+    `<meta name="theme-color" content="#EEEEEF">`,
+    `<meta name="format-detection" content="telephone=no">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="${esc(SERVICE_NAME)}">`,
+    `<meta property="og:locale" content="ko_KR">`,
+    `<meta property="og:url" content="${url}">`,
+    `<meta property="og:title" content="${esc(ogTitle)}">`,
+    `<meta property="og:description" content="${esc(ogDescription)}">`,
+    `<meta property="og:image" content="${SITE_URL}${image}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
+    `<meta property="og:image:alt" content="${esc(imageAlt)}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${esc(ogTitle)}">`,
+    `<meta name="twitter:description" content="${esc(ogDescription)}">`,
+    `<meta name="twitter:image" content="${SITE_URL}${image}">`,
+    `<link rel="icon" href="${base}assets/favicon.svg" type="image/svg+xml">`,
+    `<link rel="apple-touch-icon" href="${base}assets/apple-touch-icon.png">`,
+    jsonLd && `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, '\\u003c')}</script>`,
+  ];
+  return lines.filter(Boolean).join('\n  ');
+}
+
+const HOME = {
+  title: `${SERVICE_NAME} · 1분 탈모 테스트`,
+  description: '사진 2장으로 1분 만에 해보는 탈모 자가 체크 테스트. M자형·정수리형 등 탈모 유형과 5단계 레벨을 재미로 확인해 보세요. 사진은 서버로 전송되지 않아요.',
+  ogTitle: SERVICE_NAME,
+  ogDescription: '사진 2장, 1분이면 끝. 재미로 보는 탈모 자가 체크',
+  path: '/',
+  image: '/assets/og/default.png',
+  imageAlt: '당신은 탈모입니까? — 사진 2장, 1분이면 끝. 다섯 단계의 달걀 캐릭터',
+  base: '',
+};
+HOME.jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebApplication',
+  name: SERVICE_NAME,
+  alternateName: '1분 탈모 테스트',
+  url: `${SITE_URL}/`,
+  description: HOME.description,
+  inLanguage: 'ko-KR',
+  applicationCategory: 'LifestyleApplication',
+  operatingSystem: 'Any',
+  browserRequirements: 'Requires JavaScript and a camera or photo upload',
+  isAccessibleForFree: true,
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'KRW' },
+  image: `${SITE_URL}${HOME.image}`,
+};
 
 // ── 1) 단계별 공유 페이지 ──
 for (let s = 1; s <= 5; s++) {
   const st = STAGES[s];
   const title = `나는 레벨 ${s} 「${st.name}」 · ${SERVICE_NAME}`;
-  const url = `${SITE_URL}/result/${s}/`;
   const html = `<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>${esc(title)}</title>
-  <meta name="description" content="${esc(st.tone)} — 사진 2장, 1분이면 끝. 나도 탈모 테스트 해보기">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="${url}">
-  <meta property="og:title" content="${esc(title)}">
-  <meta property="og:description" content="${esc(st.tone)} · 나도 1분 탈모 테스트 해보기">
-  <meta property="og:image" content="${SITE_URL}/assets/og/stage-${s}.png">
-  <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#EEEEEF">
-  <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml">
+  ${seoHead({
+    title,
+    description: `${st.tone} — 사진 2장, 1분이면 끝. 나도 탈모 테스트 해보기`,
+    ogDescription: `${st.tone} · 나도 1분 탈모 테스트 해보기`,
+    path: `/result/${s}/`,
+    image: `/assets/og/stage-${s}.png`,
+    imageAlt: `탈모 테스트 결과 레벨 ${s} 「${st.name}」 — ${st.tone}`,
+    // 결과 공유 페이지는 미리보기용이라 검색 결과에서는 빼고, 링크는 따라가게 둔다
+    index: false,
+    base: '../../',
+  })}
   ${FONT}
   <link rel="stylesheet" href="../../css/style.css">
 </head>
@@ -76,20 +137,28 @@ for (let s = 1; s <= 5; s++) {
 // /result/?stage=3 형태로 들어와도 단계 페이지로 보낸다
 writeFileSync(join(ROOT, 'result', 'index.html'), `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><title>${SERVICE_NAME}</title>
+<meta name="robots" content="noindex,follow">
 <script>
   var s = new URLSearchParams(location.search).get('stage');
   location.replace(/^[1-5]$/.test(s || '') ? './' + s + '/' : '../');
 </script></head><body></body></html>
 `);
 
-// ── 2) index.html의 OG 태그를 절대 URL로 ──
+// ── 2) index.html의 SEO 블록 + sitemap.xml ──
 const indexPath = join(ROOT, 'index.html');
-let index = readFileSync(indexPath, 'utf8');
-index = index
-  .replace(/<meta property="og:image" content="[^"]*">/, `<meta property="og:image" content="${SITE_URL}/assets/og/default.png">`)
-  .replace(/\s*<meta property="og:url" content="[^"]*">/, '')
-  .replace(/(<meta property="og:type" content="website">)/, `$1\n  <meta property="og:url" content="${SITE_URL}/">`);
-writeFileSync(indexPath, index);
+const index = readFileSync(indexPath, 'utf8');
+const SEO_BLOCK = /(<!-- seo:[^\n]*-->)[\s\S]*?(<!-- \/seo -->)/;
+if (!SEO_BLOCK.test(index)) throw new Error('index.html에 <!-- seo: --> … <!-- /seo --> 블록이 없습니다');
+writeFileSync(indexPath, index.replace(SEO_BLOCK, (_, open, close) => `${open}\n  ${seoHead(HOME)}\n  ${close}`));
+
+// 검색에 노출할 페이지는 홈 하나. (프로젝트 페이지라 /cheerupbald/robots.txt는 크롤러가 읽지 않으므로
+// sitemap은 Search Console·네이버 서치어드바이저에 직접 제출한다)
+const today = new Date().toISOString().slice(0, 10);
+writeFileSync(join(ROOT, 'sitemap.xml'), `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${SITE_URL}/</loc><lastmod>${today}</lastmod></url>
+</urlset>
+`);
 
 // ── 3) OG 이미지 1200×630 (Chrome 헤드리스 스크린샷) ──
 const ogCss = `*{margin:0;box-sizing:border-box}body{width:1200px;height:630px;background:linear-gradient(180deg,#EEEEEF 0%,#DCDCDE 55%,#CDCDD0 100%);font-family:Pretendard,'Apple SD Gothic Neo',sans-serif;color:#141414;overflow:hidden;word-break:keep-all}
@@ -123,6 +192,15 @@ pages.default = `<div style="height:630px;display:flex;flex-direction:column;pad
 const tmp = join(tmpdir(), `cub-og-${process.pid}`);
 mkdirSync(tmp, { recursive: true });
 mkdirSync(join(ROOT, 'assets', 'og'), { recursive: true });
+// 홈 화면 아이콘 (iOS는 SVG 아이콘을 쓰지 않는다)
+execFileSync(CHROME, [
+  '--headless=new', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=1',
+  '--window-size=180,180', '--default-background-color=00000000',
+  `--screenshot=${join(ROOT, 'assets', 'apple-touch-icon.png')}`,
+  'data:text/html,' + encodeURIComponent(`<body style="margin:0">${readFileSync(join(ROOT, 'assets', 'favicon.svg'), 'utf8').replace('<svg ', '<svg width="180" height="180" ').replace('rx="16"', 'rx="0"')}</body>`),
+], { stdio: 'ignore' });
+console.log('icon: apple-touch-icon');
+
 for (const [name, body] of Object.entries(pages)) {
   const file = join(tmp, `${name}.html`);
   writeFileSync(file, `<!doctype html><html><head><meta charset="utf-8">${FONT}<style>${ogCss}</style></head><body>${body}</body></html>`);

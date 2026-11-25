@@ -73,3 +73,18 @@ grant execute on function public.increment_result_v2(smallint, text, text, text,
 -- 집계 보기 (대시보드 SQL Editor에서):
 -- select level, rep_type, gender, age, suspect, match, count from result_counts order by count desc;
 -- 예상 일치율: select match, sum(count) from result_counts where suspect = 'y' group by match;
+
+-- ───────── v3: 결과 화면「N명 중 M명이 같은 단계」 ─────────
+-- 레벨별 합계 5개만 돌려준다 (유형·성별·나이대 조합은 내보내지 않는다).
+create or replace function public.level_counts()
+returns table (level smallint, total bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select level, sum(count)::bigint from public.result_counts group by level;
+$$;
+
+revoke all on function public.level_counts() from public;
+grant execute on function public.level_counts() to anon;
